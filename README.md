@@ -266,6 +266,20 @@ details are worth flagging:
 - `create_payment` sends the internal note as `observation`, singular. Invoices
   and proformas spell the same field `observations`.
 
+### Amounts carry no currency
+
+`GET /invoice/paymentstatus` returns `invoiceTotalAmount`, `paidAmount` and
+`unpaidAmount` as bare doubles. The documented response schema has no currency
+field, and the figures are in whatever currency the invoice was issued in — an
+EUR invoice returns the EUR amount, indistinguishable from a RON one.
+
+Read unqualified next to a Romanian invoicing service, that reads as RON. It
+happened: a 1250 EUR invoice was reported as "1250 RON", understating it more
+than fivefold. `get_invoice_payment_status` therefore annotates its result with
+`currency: "unknown"` and a note, so the caveat sits beside the number rather
+than only in the tool description. `get_invoice_pdf` is the way to establish the
+actual currency.
+
 ### What the API cannot do
 
 There is no way to enumerate anything. The published API is 20 paths, and every

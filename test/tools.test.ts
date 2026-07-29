@@ -242,6 +242,22 @@ describe("invoice lifecycle tools", () => {
     expect(jsonOf(result).unpaidAmount).toBe(785);
   });
 
+  it("marks the payment amounts as having no known currency", async () => {
+    // SmartBill returns bare numbers in the invoice's own currency. Reported
+    // unqualified, a 1250 EUR invoice was read back as "1250 RON".
+    const { client } = await connect([
+      { json: { errorText: "", invoiceTotalAmount: 1250, paidAmount: 0, unpaidAmount: 1250, paid: false } },
+    ]);
+
+    const payload = jsonOf(
+      await client.callTool({ name: "get_invoice_payment_status", arguments: { number: "0159" } }),
+    );
+
+    expect(payload.currency).toBe("unknown");
+    expect(payload.currencyNote).toMatch(/do not\s+assume RON/i);
+    expect(payload.invoiceTotalAmount).toBe(1250);
+  });
+
   it("issues a storno invoice", async () => {
     const { client, calls } = await connect([{ json: { errorText: "", message: "ok" } }]);
 

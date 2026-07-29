@@ -38,6 +38,12 @@ nextNumber as a plain integer, so pad it back out before using it, and do not
 assume nextNumber minus one exists — deleting the last document in a series
 leaves the counter where it was.
 
+Amounts come back without a currency. get_invoice_payment_status returns bare
+numbers in whatever currency the invoice was issued in, and SmartBill does not
+report which — an invoice in EUR looks exactly like one in RON. Never attach a
+currency you have not verified. Give the figure unqualified, or read the
+currency off the document with get_invoice_pdf first.
+
 Documents can only be fetched by series and number. There is no search, no date
 range and no per-client lookup, and SmartBill exposes no customer list at all —
 clients are only ever written, as part of a document. So "all invoices for client

@@ -184,23 +184,40 @@ export function registerInvoiceTools(server: McpServer, ctx: ToolContext): void 
       description:
         "Answer whether an invoice has been paid, and how much of it. Returns invoiceTotalAmount, paidAmount, " +
         "unpaidAmount and a `paid` flag. Read-only — this reports on collections, it does not record one.\n\n" +
+        "The amounts carry NO currency. They are in whatever currency the invoice was issued in, and SmartBill does " +
+        "not report which — an invoice issued in EUR returns the EUR figure, indistinguishable from a RON one. Do " +
+        "not append RON, or any currency, to these numbers on your own authority: state the amount unqualified, or " +
+        "call get_invoice_pdf to read the currency off the document first. Saying '1250 RON' for a 1250 EUR invoice " +
+        "misstates it several-fold.\n\n" +
         "Use it for questions like 'has invoice FF 120 been paid?' or 'how much does this client still owe on it?', " +
         "and to confirm the effect after calling create_payment. To record money received, use create_payment.",
       inputSchema: invoiceRefSchema,
       annotations: { title: "Get invoice payment status", readOnlyHint: true },
     },
-    async (args) =>
-      jsonResult(
-        await client.requestJson({
-          method: "GET",
-          path: "/invoice/paymentstatus",
-          query: {
-            cif: args.companyVatCode ?? config.companyVatCode,
-            seriesname: series(args.seriesName),
-            number: args.number,
-          },
-        }),
-      ),
+    async (args) => {
+      const response = (await client.requestJson({
+        method: "GET",
+        path: "/invoice/paymentstatus",
+        query: {
+          cif: args.companyVatCode ?? config.companyVatCode,
+          seriesname: series(args.seriesName),
+          number: args.number,
+        },
+      })) as Record<string, unknown>;
+
+      // The amounts are in the invoice's own currency and the endpoint never
+      // says which. Left bare, a number next to a Romanian invoicing service
+      // reads as RON — and did, for an invoice issued in EUR. Say so in the
+      // payload rather than only in the description, so it sits next to the
+      // figure it qualifies.
+      return jsonResult({
+        ...response,
+        currency: "unknown",
+        currencyNote:
+          "Amounts are in the currency the invoice was issued in. SmartBill does not report it here — do not " +
+          "assume RON. Use get_invoice_pdf to read the currency off the document.",
+      });
+    },
   );
 
   server.registerTool(

@@ -2,6 +2,8 @@ name: deploy
 on:
   push:
     branches: [main]
+  # Lets the deployment be re-verified without a commit.
+  workflow_dispatch:
 
 jobs:
   deploy:

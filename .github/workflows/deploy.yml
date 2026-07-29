@@ -5,6 +5,15 @@ on:
   # Lets the deployment be re-verified without a commit.
   workflow_dispatch:
 
+# Every run pushes the same `:latest` tag, and the box deploys whatever `:latest`
+# points at. Two overlapping runs therefore race, and the one that finishes last
+# wins regardless of which commit is newer — an arm64 build takes ~15 minutes
+# under QEMU, so a quick follow-up commit can easily finish first and be undone
+# by its predecessor. Serialise on the branch and drop superseded runs.
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   deploy:
     runs-on: ubuntu-latest

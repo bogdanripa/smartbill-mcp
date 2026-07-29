@@ -14,6 +14,13 @@ export interface HttpOptions {
   allowedHosts: string[];
 }
 
+/**
+ * Binding '::' accepts IPv4 and IPv6 alike. Binding '0.0.0.0' does not: a
+ * healthcheck that asks for `localhost` resolves ::1 first and is refused, which
+ * is enough for an orchestrator to declare a perfectly healthy container dead.
+ */
+const DUAL_STACK = "::";
+
 export function loadHttpOptions(env: NodeJS.ProcessEnv = process.env): HttpOptions {
   const port = Number(env.PORT ?? 80);
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
@@ -27,7 +34,7 @@ export function loadHttpOptions(env: NodeJS.ProcessEnv = process.env): HttpOptio
 
   return {
     port,
-    host: env.HOST?.trim() || "0.0.0.0",
+    host: env.HOST?.trim() || DUAL_STACK,
     path: path.endsWith("/") ? path.slice(0, -1) : path,
     allowedHosts:
       env.MCP_ALLOWED_HOSTS?.split(",")
@@ -167,6 +174,17 @@ function headerValue(req: IncomingMessage, name: string): string | undefined {
  * start-up promise pending forever and surfaces as an unhandled 'error' event.
  */
 export function listen(server: Server, options: HttpOptions): Promise<void> {
+  return bind(server, options, options.host).catch((error: NodeJS.ErrnoException) => {
+    // A host with IPv6 disabled cannot bind '::'. Fall back to IPv4-only rather
+    // than refusing to start.
+    if (options.host === DUAL_STACK && (error.code === "EAFNOSUPPORT" || error.code === "EADDRNOTAVAIL")) {
+      return bind(server, options, "0.0.0.0");
+    }
+    throw error;
+  });
+}
+
+function bind(server: Server, options: HttpOptions, host: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const onError = (error: NodeJS.ErrnoException) => {
       if (error.code === "EACCES" && options.port < 1024) {
@@ -177,14 +195,14 @@ export function listen(server: Server, options: HttpOptions): Promise<void> {
           ),
         );
       } else if (error.code === "EADDRINUSE") {
-        reject(new Error(`Port ${options.port} is already in use on ${options.host}.`));
+        reject(new Error(`Port ${options.port} is already in use on ${host}.`));
       } else {
         reject(error);
       }
     };
 
     server.once("error", onError);
-    server.listen(options.port, options.host, () => {
+    server.listen(options.port, host, () => {
       server.removeListener("error", onError);
       resolve();
     });

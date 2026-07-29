@@ -103,7 +103,7 @@ describe("loadHttpOptions", () => {
   it("defaults to port 80 on all interfaces", () => {
     const options = loadHttpOptions({} as NodeJS.ProcessEnv);
 
-    expect(options).toMatchObject({ port: 80, host: "0.0.0.0", path: "/mcp", allowedHosts: [] });
+    expect(options).toMatchObject({ port: 80, host: "::", path: "/mcp", allowedHosts: [] });
   });
 
   it("rejects a port that is not a valid number", () => {
@@ -124,6 +124,16 @@ describe("loadHttpOptions", () => {
     expect(options.allowedHosts).toEqual(["a.example.com", "b.example.com"]);
   });
 });
+
+/** Some sandboxes have no IPv6 at all; connecting to ::1 fails with EAFNOSUPPORT. */
+async function hasIpv6Loopback(): Promise<boolean> {
+  const { createServer } = await import("node:net");
+  return new Promise((resolve) => {
+    const probe = createServer();
+    probe.once("error", () => resolve(false));
+    probe.listen(0, "::1", () => probe.close(() => resolve(true)));
+  });
+}
 
 describe("listen", () => {
   it("rejects with an actionable message when the port is taken", async () => {
@@ -156,6 +166,29 @@ describe("listen", () => {
     await expect(
       startListening(failing, { port: 80, host: "0.0.0.0", path: "/mcp", allowedHosts: [] }),
     ).rejects.toThrow(/CAP_NET_BIND_SERVICE/);
+  });
+
+  it("answers on both loopback families, so a healthcheck for `localhost` reaches it", async () => {
+    // Binding 0.0.0.0 left ::1 refusing connections. An orchestrator checking
+    // http://localhost/health resolves ::1 first and declares the container dead
+    // while the app is serving perfectly well on 127.0.0.1.
+    const options: HttpOptions = { port: 0, host: "::", path: "/mcp", allowedHosts: [] };
+    const server = createHttpTransport(options);
+    servers.push(server);
+
+    // Must not throw even where IPv6 is unavailable — it falls back to IPv4.
+    await startListening(server, options);
+    const { port } = server.address() as AddressInfo;
+
+    expect((await fetch(`http://127.0.0.1:${port}/health`)).status).toBe(200);
+
+    // Only assert the IPv6 path where the host actually has IPv6; CI sandboxes
+    // often do not, and the fallback is the correct behaviour there.
+    if (await hasIpv6Loopback()) {
+      for (const host of ["[::1]", "localhost"]) {
+        expect((await fetch(`http://${host}:${port}/health`)).status, `${host} should answer`).toBe(200);
+      }
+    }
   });
 });
 

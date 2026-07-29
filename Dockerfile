@@ -26,9 +26,10 @@ EXPOSE 80
 # not guaranteed to keep. A non-root USER here fails with EACCES at startup.
 
 # Lets the platform tell a started container from a ready one, so a redeploy
-# does not cut over before the new one can serve. busybox wget ships in alpine.
-HEALTHCHECK --interval=10s --timeout=3s --start-period=10s \
-  CMD wget -q -O /dev/null http://127.0.0.1:80/health || exit 1
+# does not cut over before the new one can serve. Uses node rather than curl or
+# wget: node is the one binary this image is guaranteed to have.
+HEALTHCHECK --interval=10s --timeout=3s --start-period=15s \
+  CMD node -e "fetch('http://127.0.0.1:80/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
 # HTTP mode is multi-tenant: credentials arrive with each request, so no
 # SmartBill secrets are baked into the image.

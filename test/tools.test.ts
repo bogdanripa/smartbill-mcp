@@ -41,7 +41,6 @@ describe("tool registration", () => {
       [
         "cancel_estimate",
         "cancel_invoice",
-        "cancel_payment",
         "create_estimate",
         "create_invoice",
         "create_invoice_from_estimate",
@@ -327,6 +326,23 @@ describe("payments", () => {
     expect((calls[1]!.body as any).seriesName).toBeUndefined();
   });
 
+  it("sends the internal note as `observation`, the name the payment endpoint uses", async () => {
+    const { client, calls } = await connect([{ json: { errorText: "" } }]);
+
+    await client.callTool({
+      name: "create_payment",
+      arguments: {
+        client: { name: "ACME SRL" },
+        value: 100,
+        type: "Ordin plata",
+        observations: "advance for Q3",
+      },
+    });
+
+    expect((calls[0]!.body as any).observation).toBe("advance for Q3");
+    expect((calls[0]!.body as any).observations).toBeUndefined();
+  });
+
   it("requires enough information to identify a non-receipt payment", async () => {
     const { client, calls } = await connect([]);
 
@@ -350,7 +366,7 @@ describe("payments", () => {
 
     expect(calls[0]!.method).toBe("DELETE");
     expect(calls[0]!.url).toBe(
-      "https://ws.smartbill.ro/SBORO/api/payment?cif=RO12345678&paymentType=Card&invoiceSeries=FF&invoiceNumber=120",
+      "https://ws.smartbill.ro/SBORO/api/payment/v2?cif=RO12345678&paymentType=Card&invoiceSeries=FF&invoiceNumber=120",
     );
   });
 

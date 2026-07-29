@@ -270,7 +270,7 @@ describe("HTTP transport", () => {
     await post(url, INITIALIZE);
     const payload = await readJsonRpc(await post(url, { jsonrpc: "2.0", id: 2, method: "tools/list" }));
 
-    expect(payload.result.tools).toHaveLength(23);
+    expect(payload.result.tools).toHaveLength(22);
   });
 
   it("accepts credentials in an Authorization header instead", async () => {

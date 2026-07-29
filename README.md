@@ -171,7 +171,6 @@ docker run -p 8080:80 smartbill-mcp
 | Tool | What it does |
 | --- | --- |
 | `create_payment` | Record a collection, optionally settling specific invoices. |
-| `cancel_payment` | Cancel a receipt without deleting it. |
 | `delete_receipt` | Delete a receipt (chitanta) by series and number. |
 | `delete_payment` | Delete a non-receipt payment (card, transfer, ...). |
 | `get_fiscal_receipt_text` | Printable text of a fiscal receipt, base64-decoded for you. |
@@ -242,16 +241,25 @@ per-tenant credential isolation.
 
 ## Notes on the API surface
 
-SmartBill's reference lives at <https://api.smartbill.ro/>. The endpoints, field
-names and query parameters used here match the published SmartBill SDKs. Two
+SmartBill's reference lives at <https://api.smartbill.ro/>, which serves a
+Swagger spec at <https://api.smartbill.ro/data/swagger.json>. Every endpoint,
+field name and query parameter used here has been checked against it. Three
 details are worth flagging:
 
-- `delete_payment` calls `DELETE /payment` with query parameters. SmartBill also
-  documents a `/payment/v2` variant; if your account rejects the call, set
-  `SMARTBILL_BASE_URL` or open an issue.
-- `create_invoice_from_estimate` sends `useEstimateDetails: true` with an
-  `estimate` reference and no client block, letting SmartBill copy the client and
-  line items from the proforma.
+- `delete_payment` calls `DELETE /payment/v2`. The plain `/payment` path accepts
+  only `POST`; the delete operation for non-receipt collections lives on `/v2`,
+  and takes the same query parameters this tool already sent.
+- Receipts have no cancel operation. Invoices and proformas can be voided while
+  keeping their number (`/invoice/cancel`, `/estimate/cancel`), but there is no
+  `/payment/cancel` — a receipt can only be deleted, and only if it is the last
+  one in its series.
+- `create_payment` sends the internal note as `observation`, singular. Invoices
+  and proformas spell the same field `observations`.
+
+`create_invoice_from_estimate` sends `useEstimateDetails: true` with an
+`estimate` reference and no client block, letting SmartBill copy the client and
+line items from the proforma — this matches the documented
+`exempluFacturaDinProforma` shape.
 
 ## License
 

@@ -81,7 +81,8 @@ export function registerPaymentTools(server: McpServer, ctx: ToolContext): void 
         isDraft: args.isDraft,
         type: args.type,
         isCash: args.isCash,
-        observations: args.observations,
+        // Payments spell this one singular; invoices and estimates use `observations`.
+        observation: args.observations,
         useInvoiceDetails: args.useInvoiceDetails,
         invoicesList,
       });
@@ -91,44 +92,17 @@ export function registerPaymentTools(server: McpServer, ctx: ToolContext): void 
   );
 
   server.registerTool(
-    "cancel_payment",
-    {
-      title: "Cancel receipt",
-      description:
-        "Void a receipt (chitanta) without removing it: it keeps its number and is marked cancelled, so the " +
-        "receipt series has no gap.\n\n" +
-        "Use this when a receipt was issued in error. This only applies to receipts — to remove a card or bank " +
-        "transfer collection, use delete_payment; to remove the receipt entirely, use delete_receipt.",
-      inputSchema: {
-        number: z.string().describe("Receipt number."),
-        seriesName: z.string().optional().describe("Receipt series. Falls back to SMARTBILL_RECEIPT_SERIES."),
-        companyVatCode: z.string().optional().describe("Issuing company CIF. Falls back to SMARTBILL_VAT_CODE."),
-      },
-      annotations: { title: "Cancel receipt", readOnlyHint: false, destructiveHint: true, idempotentHint: true },
-    },
-    async (args) =>
-      jsonResult(
-        await client.requestJson({
-          method: "PUT",
-          path: "/payment/cancel",
-          query: {
-            cif: args.companyVatCode ?? config.companyVatCode,
-            seriesname: receiptSeries(args.seriesName),
-            number: args.number,
-          },
-        }),
-      ),
-  );
-
-  server.registerTool(
     "delete_receipt",
     {
       title: "Delete receipt",
       description:
         "Permanently remove a receipt (chitanta), identified by its series and number. Irreversible.\n\n" +
-        "Use cancel_payment instead when the receipt should stay on record as voided — that is usually what " +
-        "accounting expects. This tool is only for receipts; other payment types are removed with delete_payment. " +
-        "Confirm with the user before calling.",
+        "SmartBill only allows this for the LAST receipt in its series and rejects it for any earlier one. There " +
+        "is no way to void a receipt while keeping it on record — unlike invoices and proformas, receipts have no " +
+        "cancel operation — so for an earlier receipt the correction has to be made in the SmartBill account " +
+        "directly.\n\n" +
+        "Use this only for receipts — use delete_payment for a card, bank transfer or other non-receipt " +
+        "collection. Confirm with the user before calling.",
       inputSchema: {
         number: z.string().describe("Receipt number."),
         seriesName: z.string().optional().describe("Receipt series. Falls back to SMARTBILL_RECEIPT_SERIES."),
@@ -161,7 +135,9 @@ export function registerPaymentTools(server: McpServer, ctx: ToolContext): void 
         "arrived. Because these payments have no series and number, identify one either by the invoice it settles " +
         "(invoiceNumber, plus invoiceSeries) — which is the reliable way — or, if it is not tied to an invoice, by " +
         "paymentDate and paymentValue together with the client.\n\n" +
-        "For receipts (chitanta), use cancel_payment or delete_receipt instead. Confirm with the user first.",
+        "Identifying by invoice needs that invoice to be neither deleted nor cancelled — delete the payment before " +
+        "cancelling the invoice, or fall back to the paymentDate/paymentValue form afterwards.\n\n" +
+        "For receipts (chitanta), use delete_receipt instead. Confirm with the user first.",
       inputSchema: {
         paymentType: z.enum(DELETABLE_PAYMENT_TYPES).describe("Type of the payment to delete."),
         invoiceSeries: z.string().optional().describe("Series of the settled invoice."),
@@ -186,7 +162,8 @@ export function registerPaymentTools(server: McpServer, ctx: ToolContext): void 
       return jsonResult(
         await client.requestJson({
           method: "DELETE",
-          path: "/payment",
+          // Deleting a non-receipt payment lives on /payment/v2; /payment itself only accepts POST.
+          path: "/payment/v2",
           query: {
             cif: args.companyVatCode ?? config.companyVatCode,
             paymentType: args.paymentType,

@@ -62,8 +62,7 @@ describe("tool documentation", () => {
       ["get_invoice_pdf", "send_document_email"],
       ["get_invoice_payment_status", "create_payment"],
       ["create_payment", "create_invoice"],
-      ["delete_receipt", "cancel_payment"],
-      ["delete_payment", "cancel_payment"],
+      ["delete_payment", "delete_receipt"],
       ["send_document_email", "create_invoice"],
     ];
 
@@ -97,7 +96,6 @@ describe("tool documentation", () => {
       "delete_invoice",
       "cancel_estimate",
       "delete_estimate",
-      "cancel_payment",
       "delete_receipt",
       "delete_payment",
     ];

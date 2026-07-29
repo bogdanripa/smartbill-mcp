@@ -14,7 +14,7 @@ export const PAYMENT_TYPES = [
   "Ramburs",
 ] as const;
 
-/** Payment types that can be removed with DELETE /payment (receipts use their own endpoint). */
+/** Payment types that can be removed with DELETE /payment/v2 (receipts use their own endpoint). */
 export const DELETABLE_PAYMENT_TYPES = [
   "Card",
   "CEC",

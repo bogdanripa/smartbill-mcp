@@ -22,6 +22,11 @@ COPY --from=build /app/dist ./dist
 EXPOSE 80
 USER node
 
+# Lets the platform tell a started container from a ready one, so a redeploy
+# does not cut over before the new one can serve. busybox wget ships in alpine.
+HEALTHCHECK --interval=10s --timeout=3s --start-period=10s \
+  CMD wget -q -O /dev/null http://127.0.0.1:80/health || exit 1
+
 # HTTP mode is multi-tenant: credentials arrive with each request, so no
 # SmartBill secrets are baked into the image.
 CMD ["node", "dist/index.js", "--http"]

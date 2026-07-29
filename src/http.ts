@@ -2,7 +2,7 @@ import { createServer as createHttpServer, type IncomingMessage, type Server, ty
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { buildConfig, type Credentials, type SmartBillConfig } from "./config.js";
 import { CredentialError, decodeBasicAuth, decodeCredentials } from "./credentials.js";
-import { createServer } from "./server.js";
+import { createServer, SERVER_NAME, SERVER_VERSION } from "./server.js";
 
 export interface HttpOptions {
   port: number;
@@ -61,6 +61,20 @@ export function createHttpTransport(
 
     if (url.pathname === "/health") {
       sendJson(res, 200, { status: "ok" });
+      return;
+    }
+
+    // The root doubles as a landing page and as a health target, so a platform
+    // health check works whether or not it is pointed at /health.
+    if (url.pathname === "/") {
+      sendJson(res, 200, {
+        name: SERVER_NAME,
+        version: SERVER_VERSION,
+        status: "ok",
+        transport: "streamable-http",
+        endpoint: `${options.path}/<credentials>`,
+        documentation: "https://github.com/bogdanripa/smartbill-mcp#running-over-http-multi-tenant",
+      });
       return;
     }
 

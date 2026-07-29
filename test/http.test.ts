@@ -134,6 +134,15 @@ describe("HTTP transport", () => {
     expect(await response.json()).toEqual({ status: "ok" });
   });
 
+  it("serves a landing page at the root that doubles as a health target", async () => {
+    const { base } = await listen();
+
+    const response = await fetch(base);
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ name: "smartbill-mcp", status: "ok" });
+  });
+
   it("completes the MCP handshake with credentials in the URL", async () => {
     const { base } = await listen();
 

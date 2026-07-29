@@ -18,7 +18,11 @@ export function registerAccountTools(server: McpServer, ctx: ToolContext): void 
     {
       title: "List document series",
       description:
-        "List the document series configured in SmartBill, with their next number. Useful for discovering valid `seriesName` values.",
+        "List the document series configured on the account, each with the next number it will issue. Read-only " +
+        "and cheap.\n\n" +
+        "Call this whenever you need a `seriesName` and do not already have one, and after any call that fails " +
+        "with an unknown-series error — rather than guessing a series name. Also answers 'what number will the " +
+        "next invoice get?'.",
       inputSchema: {
         documentType: z
           .enum(["factura", "proforma", "chitanta"])
@@ -46,7 +50,10 @@ export function registerAccountTools(server: McpServer, ctx: ToolContext): void 
     {
       title: "List VAT rates",
       description:
-        "List the VAT rates configured for the company. Use the returned names and percentages for the `taxName` and `taxPercentage` fields on invoice lines.",
+        "List the VAT rates configured for the company, as name/percentage pairs. Read-only and cheap.\n\n" +
+        "Call this before create_invoice or create_estimate whenever you are not certain which rate applies, and " +
+        "copy the returned `taxName` and `taxPercentage` onto the line items verbatim. Romanian VAT rates and " +
+        "their names change over time and differ per account, so do not rely on remembered values.",
       inputSchema: {
         companyVatCode: z.string().optional().describe("Company CIF. Falls back to SMARTBILL_VAT_CODE."),
       },
@@ -67,8 +74,10 @@ export function registerAccountTools(server: McpServer, ctx: ToolContext): void 
     {
       title: "List stock levels",
       description:
-        "Read stock levels on a given date, optionally narrowed to one warehouse or product. " +
-        "Omitting `warehouseName` returns every warehouse.",
+        "Read stock levels as of a date, optionally narrowed to one warehouse or one product. Read-only.\n\n" +
+        "Use it to answer 'how many do we have left?', to check availability before invoicing with `useStock`, or " +
+        "to report stock as it stood on a past date. Omitting `warehouseName` covers every warehouse; omitting " +
+        "`date` reports today.",
       inputSchema: {
         date: isoDate.optional().describe("Date to report stock for (YYYY-MM-DD). Defaults to today."),
         warehouseName: z.string().optional().describe("Warehouse name. Omit for all warehouses."),
@@ -99,18 +108,24 @@ export function registerAccountTools(server: McpServer, ctx: ToolContext): void 
     {
       title: "Email a document",
       description:
-        "Email an already-issued invoice or estimate to a client. When `to`, `subject` or `bodyText` are omitted, " +
-        "SmartBill falls back to the client's address and the templates configured in the account.",
+        "Send an invoice or proforma that already exists to the client by email, with the PDF attached by " +
+        "SmartBill. Use this when the user asks to send or resend a document.\n\n" +
+        "Omit `to`, `subject` or `bodyText` to use the client's stored address and the templates configured in the " +
+        "SmartBill account — usually the right choice. Pass plain text for the subject and body; encoding is " +
+        "handled for you.\n\n" +
+        "To email a document at the moment it is issued instead, set `sendEmail: true` on create_invoice or " +
+        "create_estimate rather than calling this afterwards. This sends real mail to a customer: confirm the " +
+        "recipient with the user first.",
       inputSchema: {
         documentType: z.enum(DOCUMENT_TYPES).describe("Which document to send."),
         number: z.string().describe("Document number."),
         seriesName: z.string().optional().describe("Document series. Falls back to the configured default."),
         to: z.string().optional().describe("Recipient address."),
-        cc: z.string().optional(),
-        bcc: z.string().optional(),
+        cc: z.string().optional().describe("Carbon copy address."),
+        bcc: z.string().optional().describe("Blind carbon copy address."),
         subject: z.string().optional().describe("Plain text; encoded for the API automatically."),
         bodyText: z.string().optional().describe("Plain text; encoded for the API automatically."),
-        companyVatCode: z.string().optional(),
+        companyVatCode: z.string().optional().describe("Issuing company CIF. Falls back to SMARTBILL_VAT_CODE."),
       },
       annotations: { title: "Email a document", readOnlyHint: false, destructiveHint: false },
     },

@@ -35,16 +35,16 @@ export const clientSchema = z.object({
   vatCode: z.string().optional().describe("Client fiscal code (CIF/CUI), e.g. RO12345678."),
   code: z.string().optional().describe("Internal client code in SmartBill."),
   isTaxPayer: z.boolean().optional().describe("True when the client is registered for VAT."),
-  regCom: z.string().optional().describe("Trade register number (numar registrul comertului)."),
-  address: z.string().optional(),
+  regCom: z.string().optional().describe("Trade register number (numar registrul comertului), e.g. J12/345/2020."),
+  address: z.string().optional().describe("Street address, printed on the document."),
   contact: z.string().optional().describe("Contact person at the client."),
-  city: z.string().optional(),
-  county: z.string().optional().describe("County (judet)."),
-  country: z.string().optional(),
+  city: z.string().optional().describe("City (localitate)."),
+  county: z.string().optional().describe("County (judet), e.g. Cluj."),
+  country: z.string().optional().describe("Country. Defaults to Romania in SmartBill."),
   email: z.string().optional().describe("Used as the recipient when the document is emailed."),
-  phone: z.string().optional(),
-  iban: z.string().optional(),
-  bank: z.string().optional(),
+  phone: z.string().optional().describe("Client phone number."),
+  iban: z.string().optional().describe("Client bank account."),
+  bank: z.string().optional().describe("Client bank name."),
   saveToDb: z
     .boolean()
     .optional()
@@ -55,8 +55,11 @@ export const productSchema = z.object({
   name: z.string().describe("Product or service name."),
   code: z.string().optional().describe("Product code."),
   productDescription: z.string().optional().describe("Extra description printed under the line item."),
-  translatedName: z.string().optional(),
-  translatedMeasuringUnit: z.string().optional(),
+  translatedName: z.string().optional().describe("Product name in the document language, when it is not RO."),
+  translatedMeasuringUnit: z
+    .string()
+    .optional()
+    .describe("Unit of measure in the document language, when it is not RO."),
   measuringUnitName: z.string().optional().describe("Unit of measure, e.g. 'buc', 'ora'. Default 'buc'."),
   currency: z.string().optional().describe("Line currency, e.g. RON, EUR. Default RON."),
   exchangeRate: z.number().optional().describe("Exchange rate to RON when currency is not RON."),
@@ -91,8 +94,8 @@ export const invoicePaymentSchema = z.object({
 
 export const emailDetailsSchema = z.object({
   to: z.string().optional().describe("Recipient address. Defaults to the client email set in SmartBill."),
-  cc: z.string().optional(),
-  bcc: z.string().optional(),
+  cc: z.string().optional().describe("Carbon copy address."),
+  bcc: z.string().optional().describe("Blind carbon copy address."),
   subject: z.string().optional().describe("Plain text; encoded for the API automatically."),
   bodyText: z.string().optional().describe("Plain text; encoded for the API automatically."),
 });

@@ -30,8 +30,15 @@ export function registerInvoiceTools(server: McpServer, ctx: ToolContext): void 
     {
       title: "Create invoice",
       description:
-        "Issue a new invoice in SmartBill. Returns the series, number and the SmartBill URL of the document. " +
-        "Use `isDraft: true` to create it as a draft that still has to be confirmed in SmartBill.",
+        "Issue a new invoice (factura) in SmartBill for a normal sale. Returns { series, number, url }, where url " +
+        "links to the document in SmartBill Cloud.\n\n" +
+        "Before calling: use list_taxes to get valid taxName/taxPercentage values rather than guessing a VAT rate, " +
+        "and list_series if you do not know which series to issue into.\n\n" +
+        "Do not use this to invoice an existing proforma — use create_invoice_from_estimate, which links the two " +
+        "documents. Do not use it to reverse an invoice — use create_reverse_invoice.\n\n" +
+        "An issued invoice is a fiscal document that generally cannot be deleted afterwards. Confirm the client, " +
+        "the amounts and the VAT rate with the user before calling, and pass isDraft: true while details are still " +
+        "unsettled — a draft can be edited or discarded in SmartBill.",
       inputSchema: {
         ...documentBodySchema,
         payment: invoicePaymentSchema
@@ -62,8 +69,12 @@ export function registerInvoiceTools(server: McpServer, ctx: ToolContext): void 
     {
       title: "Create invoice from estimate",
       description:
-        "Issue an invoice that copies its client and line items from an existing estimate (proforma). " +
-        "`seriesName` is the invoice series; `estimateSeriesName` and `estimateNumber` identify the source estimate.",
+        "Issue an invoice from a proforma the customer has accepted. Returns { series, number, url }.\n\n" +
+        "Prefer this over create_invoice whenever a proforma exists: it links the two documents, so the proforma " +
+        "is reported as invoiced by get_estimate_invoices. Rebuilding the same invoice by hand leaves the proforma " +
+        "looking unbilled.\n\n" +
+        "The client and the line items are copied from the proforma — do not re-send them. `seriesName` is the " +
+        "invoice series to issue into; `estimateSeriesName` and `estimateNumber` identify the source proforma.",
       inputSchema: {
         estimateNumber: z.string().describe("Number of the source estimate."),
         estimateSeriesName: z
@@ -71,12 +82,12 @@ export function registerInvoiceTools(server: McpServer, ctx: ToolContext): void 
           .optional()
           .describe("Series of the source estimate. Falls back to SMARTBILL_ESTIMATE_SERIES."),
         seriesName: z.string().optional().describe("Invoice series to issue into."),
-        companyVatCode: z.string().optional(),
-        issueDate: isoDate.optional(),
-        dueDate: isoDate.optional(),
-        isDraft: z.boolean().optional(),
-        mentions: z.string().optional(),
-        observations: z.string().optional(),
+        companyVatCode: z.string().optional().describe("Issuing company CIF. Falls back to SMARTBILL_VAT_CODE."),
+        issueDate: isoDate.optional().describe("Invoice issue date (YYYY-MM-DD). Defaults to today at SmartBill."),
+        dueDate: isoDate.optional().describe("Payment due date (YYYY-MM-DD)."),
+        isDraft: z.boolean().optional().describe("Issue as a draft instead of a final invoice."),
+        mentions: z.string().optional().describe("Free text printed on the invoice."),
+        observations: z.string().optional().describe("Internal note; not printed on the invoice."),
         sendEmail: z.boolean().optional().describe("Email the invoice to the client on issue."),
       },
       annotations: { title: "Create invoice from estimate", readOnlyHint: false, destructiveHint: false },
@@ -110,7 +121,12 @@ export function registerInvoiceTools(server: McpServer, ctx: ToolContext): void 
     {
       title: "Create reverse (storno) invoice",
       description:
-        "Issue a storno invoice that reverses an existing invoice in full. The reversal is issued into the same series.",
+        "Issue a storno invoice that reverses an existing invoice in full, into the same series. This is the " +
+        "accounting-visible way to undo an invoice: both documents remain, and they cancel out.\n\n" +
+        "Use this when an invoice is too old to delete and the reversal has to appear in the books. Use " +
+        "cancel_invoice instead when the invoice was issued in error and simply needs to be voided. For a partial " +
+        "correction, issue a new invoice with negative quantities rather than reversing the whole document.\n\n" +
+        "This creates a new fiscal document — confirm with the user before calling.",
       inputSchema: {
         ...invoiceRefSchema,
         issueDate: isoDate.optional().describe("Issue date of the storno invoice (YYYY-MM-DD)."),
@@ -133,7 +149,11 @@ export function registerInvoiceTools(server: McpServer, ctx: ToolContext): void 
     {
       title: "Download invoice PDF",
       description:
-        "Download the PDF of an invoice. By default the file is written to the configured download directory and the path is returned.",
+        "Fetch the PDF of an already-issued invoice, for when the user wants the document itself — to read it, " +
+        "attach it somewhere, or save a copy. Read-only.\n\n" +
+        "Returns either a path on the server's filesystem or base64 bytes, depending on how the server is running; " +
+        "force one with `as`. To send the invoice to the client by email, use send_document_email instead — that " +
+        "does not require downloading it first.",
       inputSchema: { ...invoiceRefSchema, ...documentDeliverySchema },
       annotations: { title: "Download invoice PDF", readOnlyHint: true },
     },
@@ -157,7 +177,10 @@ export function registerInvoiceTools(server: McpServer, ctx: ToolContext): void 
     {
       title: "Get invoice payment status",
       description:
-        "Check how much of an invoice has been collected. Returns the invoice total, the paid and unpaid amounts and a `paid` flag.",
+        "Answer whether an invoice has been paid, and how much of it. Returns invoiceTotalAmount, paidAmount, " +
+        "unpaidAmount and a `paid` flag. Read-only — this reports on collections, it does not record one.\n\n" +
+        "Use it for questions like 'has invoice FF 120 been paid?' or 'how much does this client still owe on it?', " +
+        "and to confirm the effect after calling create_payment. To record money received, use create_payment.",
       inputSchema: invoiceRefSchema,
       annotations: { title: "Get invoice payment status", readOnlyHint: true },
     },
@@ -180,7 +203,12 @@ export function registerInvoiceTools(server: McpServer, ctx: ToolContext): void 
     {
       title: "Cancel invoice",
       description:
-        "Mark an invoice as cancelled (anulata). The document keeps its number and can be brought back with restore_invoice.",
+        "Void an invoice (anulare). The document stays in SmartBill, keeps its number and is marked cancelled, so " +
+        "the series has no gap. Reversible with restore_invoice.\n\n" +
+        "Use this when an invoice was issued in error. Use delete_invoice only if it is the last one in its series " +
+        "and should vanish entirely; use create_reverse_invoice when the undo has to appear in the accounts as a " +
+        "storno document.\n\n" +
+        "Confirm with the user before calling — this changes the status of a real fiscal document.",
       inputSchema: invoiceRefSchema,
       annotations: { title: "Cancel invoice", readOnlyHint: false, destructiveHint: true, idempotentHint: true },
     },
@@ -202,7 +230,10 @@ export function registerInvoiceTools(server: McpServer, ctx: ToolContext): void 
     "restore_invoice",
     {
       title: "Restore cancelled invoice",
-      description: "Undo a cancellation and put the invoice back into its normal state.",
+      description:
+        "Undo cancel_invoice and put a cancelled invoice back into its normal, valid state.\n\n" +
+        "Use this when an invoice was voided by mistake and should count again. It has no effect on an invoice " +
+        "that was never cancelled, and it cannot bring back one that was deleted — deletion has no undo.",
       inputSchema: invoiceRefSchema,
       annotations: { title: "Restore invoice", readOnlyHint: false, destructiveHint: false, idempotentHint: true },
     },
@@ -225,7 +256,10 @@ export function registerInvoiceTools(server: McpServer, ctx: ToolContext): void 
     {
       title: "Delete invoice",
       description:
-        "Permanently delete an invoice. Only the last invoice in a series can be deleted; use cancel_invoice for older ones.",
+        "Permanently remove an invoice, freeing its number for reuse. Irreversible — there is no restore.\n\n" +
+        "SmartBill only allows this for the LAST invoice in a series and rejects it for any earlier one. For those, " +
+        "use cancel_invoice to void it or create_reverse_invoice to storno it.\n\n" +
+        "Destroys a fiscal document: ask the user to confirm explicitly, and prefer cancel_invoice when unsure.",
       inputSchema: invoiceRefSchema,
       annotations: { title: "Delete invoice", readOnlyHint: false, destructiveHint: true, idempotentHint: true },
     },

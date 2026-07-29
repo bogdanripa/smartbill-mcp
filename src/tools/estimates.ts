@@ -29,8 +29,13 @@ export function registerEstimateTools(server: McpServer, ctx: ToolContext): void
     {
       title: "Create estimate (proforma)",
       description:
-        "Issue a proforma invoice. Returns the series, number and SmartBill URL. " +
-        "An estimate can later be turned into an invoice with create_invoice_from_estimate.",
+        "Issue a proforma (estimate) — a quote or payment request that is not yet a fiscal invoice. Returns " +
+        "{ series, number, url }.\n\n" +
+        "Use this when the customer needs something to approve or to pay against before being invoiced, or when " +
+        "the user asks for a quote, an offer or a proforma. Use create_invoice instead when the sale is final and " +
+        "a fiscal document is what's wanted.\n\n" +
+        "Once the customer accepts, turn it into an invoice with create_invoice_from_estimate rather than building " +
+        "the invoice by hand. As with invoices, call list_taxes for valid VAT rates.",
       inputSchema: documentBodySchema,
       annotations: { title: "Create estimate", readOnlyHint: false, destructiveHint: false },
     },
@@ -53,7 +58,9 @@ export function registerEstimateTools(server: McpServer, ctx: ToolContext): void
     {
       title: "Download estimate PDF",
       description:
-        "Download the PDF of an estimate. By default the file is written to the configured download directory and the path is returned.",
+        "Fetch the PDF of an already-issued proforma, for when the user wants the document itself. Read-only.\n\n" +
+        "Returns either a path on the server's filesystem or base64 bytes, depending on how the server is running; " +
+        "force one with `as`. To send the proforma to the client by email, use send_document_email instead.",
       inputSchema: { ...estimateRefSchema, ...documentDeliverySchema },
       annotations: { title: "Download estimate PDF", readOnlyHint: true },
     },
@@ -77,7 +84,9 @@ export function registerEstimateTools(server: McpServer, ctx: ToolContext): void
     {
       title: "List invoices issued from an estimate",
       description:
-        "Check whether an estimate has already been invoiced, and which invoices were issued from it.",
+        "Check whether a proforma has already been invoiced, and which invoices came out of it. Read-only.\n\n" +
+        "Call this before create_invoice_from_estimate to avoid double-invoicing the same proforma, and to answer " +
+        "questions like 'did we ever bill that quote?'. An empty result means the proforma is still open.",
       inputSchema: estimateRefSchema,
       annotations: { title: "List invoices from estimate", readOnlyHint: true },
     },
@@ -99,7 +108,11 @@ export function registerEstimateTools(server: McpServer, ctx: ToolContext): void
     "cancel_estimate",
     {
       title: "Cancel estimate",
-      description: "Mark an estimate as cancelled. It can be brought back with restore_estimate.",
+      description:
+        "Void a proforma. It stays in SmartBill, keeps its number and is marked cancelled, so the series has no " +
+        "gap. Reversible with restore_estimate.\n\n" +
+        "Use this when a quote is withdrawn or the customer declines. Use delete_estimate only if it is the last " +
+        "one in its series and should disappear entirely.",
       inputSchema: estimateRefSchema,
       annotations: { title: "Cancel estimate", readOnlyHint: false, destructiveHint: true, idempotentHint: true },
     },
@@ -121,7 +134,10 @@ export function registerEstimateTools(server: McpServer, ctx: ToolContext): void
     "restore_estimate",
     {
       title: "Restore cancelled estimate",
-      description: "Undo a cancellation and put the estimate back into its normal state.",
+      description:
+        "Undo cancel_estimate and put a cancelled proforma back into its normal state.\n\n" +
+        "Use this when a quote was voided by mistake and is live again. It cannot bring back a proforma that was " +
+        "deleted — deletion has no undo.",
       inputSchema: estimateRefSchema,
       annotations: { title: "Restore estimate", readOnlyHint: false, destructiveHint: false, idempotentHint: true },
     },
@@ -144,7 +160,9 @@ export function registerEstimateTools(server: McpServer, ctx: ToolContext): void
     {
       title: "Delete estimate",
       description:
-        "Permanently delete an estimate. Only the last estimate in a series can be deleted; use cancel_estimate for older ones.",
+        "Permanently remove a proforma, freeing its number for reuse. Irreversible — there is no restore.\n\n" +
+        "SmartBill only allows this for the LAST proforma in a series and rejects it for any earlier one; use " +
+        "cancel_estimate for those. Ask the user to confirm, and prefer cancel_estimate when unsure.",
       inputSchema: estimateRefSchema,
       annotations: { title: "Delete estimate", readOnlyHint: false, destructiveHint: true, idempotentHint: true },
     },

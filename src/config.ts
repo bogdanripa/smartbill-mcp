@@ -9,9 +9,24 @@ export interface SmartBillConfig {
   defaultInvoiceSeries?: string;
   defaultEstimateSeries?: string;
   defaultReceiptSeries?: string;
-  /** Directory PDFs are written to. */
+  /** Directory PDFs are written to when they are delivered as files. */
   downloadDir: string;
+  /**
+   * How PDFs are returned when the caller does not say. Writing a file only helps
+   * a client that shares a filesystem with the server, so hosted deployments
+   * default to base64.
+   */
+  defaultPdfDelivery: "file" | "base64";
   baseUrl: string;
+}
+
+export interface Credentials {
+  username: string;
+  token: string;
+  companyVatCode: string;
+  defaultInvoiceSeries?: string;
+  defaultEstimateSeries?: string;
+  defaultReceiptSeries?: string;
 }
 
 class ConfigError extends Error {}
@@ -32,17 +47,42 @@ function optional(value: string | undefined): string | undefined {
   return trimmed ? trimmed : undefined;
 }
 
-export function loadConfig(env: NodeJS.ProcessEnv = process.env): SmartBillConfig {
+/** Settings that are the same for every tenant of a given deployment. */
+export function loadServerSettings(env: NodeJS.ProcessEnv = process.env) {
   return {
-    username: required("SMARTBILL_USERNAME", env.SMARTBILL_USERNAME),
-    token: required("SMARTBILL_TOKEN", env.SMARTBILL_TOKEN),
-    companyVatCode: required("SMARTBILL_VAT_CODE", env.SMARTBILL_VAT_CODE),
-    defaultInvoiceSeries: optional(env.SMARTBILL_INVOICE_SERIES),
-    defaultEstimateSeries: optional(env.SMARTBILL_ESTIMATE_SERIES),
-    defaultReceiptSeries: optional(env.SMARTBILL_RECEIPT_SERIES),
     downloadDir: optional(env.SMARTBILL_DOWNLOAD_DIR) ?? "./smartbill-downloads",
     baseUrl: optional(env.SMARTBILL_BASE_URL) ?? "https://ws.smartbill.ro/SBORO/api",
   };
+}
+
+/** Builds a config from per-request credentials, for the multi-tenant HTTP transport. */
+export function buildConfig(
+  credentials: Credentials,
+  overrides: Partial<SmartBillConfig> = {},
+  env: NodeJS.ProcessEnv = process.env,
+): SmartBillConfig {
+  return {
+    ...credentials,
+    ...loadServerSettings(env),
+    defaultPdfDelivery: "file",
+    ...overrides,
+  };
+}
+
+/** Builds a config from the environment, for the single-account stdio transport. */
+export function loadConfig(env: NodeJS.ProcessEnv = process.env): SmartBillConfig {
+  return buildConfig(
+    {
+      username: required("SMARTBILL_USERNAME", env.SMARTBILL_USERNAME),
+      token: required("SMARTBILL_TOKEN", env.SMARTBILL_TOKEN),
+      companyVatCode: required("SMARTBILL_VAT_CODE", env.SMARTBILL_VAT_CODE),
+      defaultInvoiceSeries: optional(env.SMARTBILL_INVOICE_SERIES),
+      defaultEstimateSeries: optional(env.SMARTBILL_ESTIMATE_SERIES),
+      defaultReceiptSeries: optional(env.SMARTBILL_RECEIPT_SERIES),
+    },
+    {},
+    env,
+  );
 }
 
 export { ConfigError };

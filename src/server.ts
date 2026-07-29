@@ -10,18 +10,33 @@ import type { ToolContext } from "./tools/shared.js";
 export const SERVER_NAME = "smartbill-mcp";
 export const SERVER_VERSION = "0.1.0";
 
-const INSTRUCTIONS = `Tools for the SmartBill Cloud API (Romanian invoicing).
+const INSTRUCTIONS = `Tools for SmartBill Cloud, the Romanian invoicing service. They act on one real
+company's books: everything issued here is a live fiscal document, not a sandbox.
 
-Documents are identified by a series plus a number, e.g. series "FF" number "120".
-Series can be omitted when a default is configured; call list_series to discover
-the ones this account has. Call list_taxes to get valid taxName / taxPercentage
-values before building invoice lines.
+Documents are identified by a series plus a number — series "FF", number "120",
+usually written "FF 120". A series can be omitted when the server has a default
+configured; otherwise call list_series to see what this account actually has.
+Never invent a series name or a VAT rate.
 
-Issuing a document is not reversible from the API in the general case: only the
-last document in a series can be deleted, older ones can only be cancelled
-(cancel_invoice) or reversed with a storno invoice (create_reverse_invoice).
-Confirm amounts and the client with the user before issuing anything final, and
-prefer isDraft: true when the details are not yet settled.`;
+Three document kinds, easy to confuse:
+- invoice (factura) — the fiscal document. create_invoice.
+- estimate (proforma) — a quote or payment request, not yet fiscal. create_estimate.
+  Once accepted, convert it with create_invoice_from_estimate so the two documents
+  stay linked.
+- payment (incasare) — money received. create_payment, optionally settling
+  specific invoices.
+
+Before issuing anything, call list_taxes for valid taxName / taxPercentage values
+and list_series if the series is unknown. Both are cheap and read-only.
+
+Undoing is asymmetric and worth getting right: only the LAST document in a series
+can be deleted. Anything earlier can be cancelled (cancel_invoice, reversible) or
+reversed with a storno document (create_reverse_invoice, which is what accounting
+usually wants). Deleting is irreversible.
+
+Confirm the client, the amounts and the VAT rate with the user before issuing a
+final document, emailing a customer, or deleting anything. Prefer isDraft: true
+while details are still unsettled — a draft can be edited or discarded.`;
 
 export function createServer(config: SmartBillConfig, fetchImpl?: typeof fetch): McpServer {
   const server = new McpServer(

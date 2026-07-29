@@ -16,8 +16,14 @@ export function registerPaymentTools(server: McpServer, ctx: ToolContext): void 
     {
       title: "Record a payment",
       description:
-        "Record a collection (incasare). Set `invoices` to settle specific invoices, or leave it empty for a standalone payment. " +
-        "`seriesName` is only needed for type 'Chitanta', where it is the receipt series.",
+        "Record money received from a client (incasare). Use this when the user says a customer has paid.\n\n" +
+        "Pass `invoices` to settle specific invoices — their payment status then reflects the collection, which " +
+        "you can confirm with get_invoice_payment_status. Leave `invoices` empty only for a standalone payment such " +
+        "as an advance not yet tied to any invoice.\n\n" +
+        "Pick `type` to match how the money arrived: 'Ordin plata' for a bank transfer, 'Card' for a card payment, " +
+        "'Chitanta' to issue a numbered paper receipt (this one needs `seriesName`, the receipt series), 'Bon' for " +
+        "a fiscal receipt. Ask the user rather than guessing — the type appears on the accounting record.\n\n" +
+        "This does not issue an invoice; use create_invoice for that.",
       inputSchema: {
         client: clientSchema.describe("The client the payment comes from."),
         value: z.number().describe("Amount collected."),
@@ -27,13 +33,16 @@ export function registerPaymentTools(server: McpServer, ctx: ToolContext): void 
         companyVatCode: z.string().optional().describe("Issuing company CIF. Falls back to SMARTBILL_VAT_CODE."),
         isCash: z.boolean().optional().describe("True for cash collection. Default false."),
         currency: z.string().optional().describe("Payment currency. Default RON."),
-        exchangeRate: z.number().optional(),
-        language: z.string().optional().describe("Document language. Default RO."),
-        precision: z.union([z.literal(2), z.literal(3), z.literal(4)]).optional(),
+        exchangeRate: z.number().optional().describe("Exchange rate to RON when currency is not RON."),
+        language: z.string().optional().describe("Document language: RO, EN, DE, IT, ES, FR, HU. Default RO."),
+        precision: z
+          .union([z.literal(2), z.literal(3), z.literal(4)])
+          .optional()
+          .describe("Number of decimals used for amounts. Default 2."),
         text: z.string().optional().describe("Text printed on the receipt, e.g. 'Contravaloare factura FF 120'."),
-        translatedText: z.string().optional(),
+        translatedText: z.string().optional().describe("The `text` value in the document language, when not RO."),
         observations: z.string().optional().describe("Internal note."),
-        isDraft: z.boolean().optional(),
+        isDraft: z.boolean().optional().describe("Record as a draft instead of a final collection."),
         invoices: z
           .array(
             z.object({
@@ -85,11 +94,15 @@ export function registerPaymentTools(server: McpServer, ctx: ToolContext): void 
     "cancel_payment",
     {
       title: "Cancel receipt",
-      description: "Mark a receipt (chitanta) as cancelled without removing it.",
+      description:
+        "Void a receipt (chitanta) without removing it: it keeps its number and is marked cancelled, so the " +
+        "receipt series has no gap.\n\n" +
+        "Use this when a receipt was issued in error. This only applies to receipts — to remove a card or bank " +
+        "transfer collection, use delete_payment; to remove the receipt entirely, use delete_receipt.",
       inputSchema: {
         number: z.string().describe("Receipt number."),
         seriesName: z.string().optional().describe("Receipt series. Falls back to SMARTBILL_RECEIPT_SERIES."),
-        companyVatCode: z.string().optional(),
+        companyVatCode: z.string().optional().describe("Issuing company CIF. Falls back to SMARTBILL_VAT_CODE."),
       },
       annotations: { title: "Cancel receipt", readOnlyHint: false, destructiveHint: true, idempotentHint: true },
     },
@@ -111,11 +124,15 @@ export function registerPaymentTools(server: McpServer, ctx: ToolContext): void 
     "delete_receipt",
     {
       title: "Delete receipt",
-      description: "Permanently delete a receipt (chitanta) identified by its series and number.",
+      description:
+        "Permanently remove a receipt (chitanta), identified by its series and number. Irreversible.\n\n" +
+        "Use cancel_payment instead when the receipt should stay on record as voided — that is usually what " +
+        "accounting expects. This tool is only for receipts; other payment types are removed with delete_payment. " +
+        "Confirm with the user before calling.",
       inputSchema: {
         number: z.string().describe("Receipt number."),
         seriesName: z.string().optional().describe("Receipt series. Falls back to SMARTBILL_RECEIPT_SERIES."),
-        companyVatCode: z.string().optional(),
+        companyVatCode: z.string().optional().describe("Issuing company CIF. Falls back to SMARTBILL_VAT_CODE."),
       },
       annotations: { title: "Delete receipt", readOnlyHint: false, destructiveHint: true, idempotentHint: true },
     },
@@ -138,8 +155,13 @@ export function registerPaymentTools(server: McpServer, ctx: ToolContext): void 
     {
       title: "Delete non-receipt payment",
       description:
-        "Delete a collection that is not a receipt (card, bank transfer, promissory note, ...). " +
-        "Identify it either by the invoice it settles (invoiceSeries + invoiceNumber) or by date, value and client.",
+        "Remove a collection that has no receipt number of its own — a card payment, bank transfer, promissory " +
+        "note and so on. Irreversible.\n\n" +
+        "Use this to undo a create_payment that recorded the wrong amount, the wrong client or a payment that never " +
+        "arrived. Because these payments have no series and number, identify one either by the invoice it settles " +
+        "(invoiceNumber, plus invoiceSeries) — which is the reliable way — or, if it is not tied to an invoice, by " +
+        "paymentDate and paymentValue together with the client.\n\n" +
+        "For receipts (chitanta), use cancel_payment or delete_receipt instead. Confirm with the user first.",
       inputSchema: {
         paymentType: z.enum(DELETABLE_PAYMENT_TYPES).describe("Type of the payment to delete."),
         invoiceSeries: z.string().optional().describe("Series of the settled invoice."),
@@ -148,7 +170,7 @@ export function registerPaymentTools(server: McpServer, ctx: ToolContext): void 
         paymentValue: z.number().optional().describe("Payment amount. Not needed when the invoice is known."),
         clientName: z.string().optional().describe("Client name. Not needed when the invoice is known."),
         clientCif: z.string().optional().describe("Client CIF. Not needed when the invoice is known."),
-        companyVatCode: z.string().optional(),
+        companyVatCode: z.string().optional().describe("Issuing company CIF. Falls back to SMARTBILL_VAT_CODE."),
       },
       annotations: { title: "Delete payment", readOnlyHint: false, destructiveHint: true, idempotentHint: true },
     },
@@ -187,10 +209,13 @@ export function registerPaymentTools(server: McpServer, ctx: ToolContext): void 
     {
       title: "Get fiscal receipt text",
       description:
-        "Fetch the printable text of a fiscal receipt (bon fiscal) by its SmartBill id. The base64 payload is decoded for you.",
+        "Fetch the printable text of a fiscal receipt (bon fiscal) by its SmartBill id, decoded to plain text. " +
+        "Read-only.\n\n" +
+        "Use it to inspect or reprint what was on a fiscal receipt. This needs the receipt's internal SmartBill id, " +
+        "not a series and number — if you only have those, this is not the right tool.",
       inputSchema: {
         id: z.string().describe("SmartBill id of the fiscal receipt."),
-        companyVatCode: z.string().optional(),
+        companyVatCode: z.string().optional().describe("Issuing company CIF. Falls back to SMARTBILL_VAT_CODE."),
       },
       annotations: { title: "Get fiscal receipt text", readOnlyHint: true },
     },

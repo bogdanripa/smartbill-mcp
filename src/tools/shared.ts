@@ -47,7 +47,8 @@ export const documentDeliverySchema = {
     .enum(["file", "base64"])
     .optional()
     .describe(
-      "How to return the PDF: 'file' (default) writes it to the download directory and returns the path; 'base64' returns the bytes inline.",
+      "How to return the PDF: 'file' writes it to the server's download directory and returns the path; " +
+        "'base64' returns the bytes inline. Defaults to whichever suits the transport in use.",
     ),
 };
 
@@ -55,11 +56,11 @@ export async function deliverPdf(
   binary: BinaryResponse,
   fallbackName: string,
   config: SmartBillConfig,
-  as: "file" | "base64" = "file",
+  as?: "file" | "base64",
 ): Promise<ToolResult> {
   const filename = sanitiseFilename(binary.filename ?? fallbackName);
 
-  if (as === "base64") {
+  if ((as ?? config.defaultPdfDelivery) === "base64") {
     return jsonResult({
       filename,
       mimeType: binary.contentType,
@@ -110,8 +111,11 @@ export const documentBodySchema = {
   issuerName: z.string().optional().describe("Name of the issuing person."),
   mentions: z.string().optional().describe("Free text printed on the document."),
   observations: z.string().optional().describe("Internal note; not printed on the document."),
-  delegateName: z.string().optional(),
-  delegateIdentityCard: z.string().optional().describe("Only printed when delegateName is also sent."),
+  delegateName: z.string().optional().describe("Person collecting the goods (delegat), printed on the document."),
+  delegateIdentityCard: z
+    .string()
+    .optional()
+    .describe("Delegate ID card series and number; only printed when delegateName is also sent."),
   delegateAuto: z
     .string()
     .optional()

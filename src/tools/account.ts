@@ -22,7 +22,10 @@ export function registerAccountTools(server: McpServer, ctx: ToolContext): void 
         "and cheap.\n\n" +
         "Call this whenever you need a `seriesName` and do not already have one, and after any call that fails " +
         "with an unknown-series error — rather than guessing a series name. Also answers 'what number will the " +
-        "next invoice get?'.",
+        "next invoice get?'.\n\n" +
+        "`nextNumber` comes back as a plain integer, but documents are addressed by their printed number, with " +
+        "leading zeros — pad it back out before passing it to another tool. It is also only a counter: the " +
+        "document before it may have been deleted, so do not assume nextNumber minus one exists.",
       inputSchema: {
         documentType: z
           .enum(["factura", "proforma", "chitanta"])

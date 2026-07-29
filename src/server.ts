@@ -29,6 +29,15 @@ usually written "FF 120". A series can be omitted when the server has a default
 configured; otherwise call list_series to see what this account actually has.
 Never invent a series name or a VAT rate.
 
+Numbers keep their leading zeros. It is the number as printed on the document,
+not its integer value: invoice 159 in series "GNZ-" is "0159", and "159" comes
+back as "Factura nu a fost gasita" — which reads like the document is missing
+when it is only mis-formatted. Do not report a document as non-existent on the
+strength of that error alone; check the padding first. list_series returns
+nextNumber as a plain integer, so pad it back out before using it, and do not
+assume nextNumber minus one exists — deleting the last document in a series
+leaves the counter where it was.
+
 Documents can only be fetched by series and number. There is no search, no date
 range and no per-client lookup, and SmartBill exposes no customer list at all —
 clients are only ever written, as part of a document. So "all invoices for client

@@ -28,6 +28,13 @@ describe("server instructions", () => {
     }
   });
 
+  it("warn that document numbers keep their leading zeros", () => {
+    // "159" instead of "0159" comes back as "Factura nu a fost gasita", which
+    // reads like the document is missing rather than mis-addressed.
+    expect(instructions).toMatch(/leading zeros/i);
+    expect(instructions).toMatch(/nextNumber/);
+  });
+
   it("say that documents cannot be searched, only fetched by series and number", () => {
     expect(instructions).toMatch(/only be fetched by series and number/i);
     expect(instructions).toMatch(/no search/i);

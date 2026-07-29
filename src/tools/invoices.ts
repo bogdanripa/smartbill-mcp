@@ -14,7 +14,12 @@ import {
 const INVOICE_SERIES_ENV = "SMARTBILL_INVOICE_SERIES";
 
 const invoiceRefSchema = {
-  number: z.string().describe("Invoice number, without the series prefix."),
+  number: z
+    .string()
+    .describe(
+      "Invoice number as printed on the document, leading zeros included — '0159', not '159'. " +
+        "An unpadded number is reported as not found.",
+    ),
   seriesName: z.string().optional().describe("Invoice series. Falls back to the configured default."),
   companyVatCode: z.string().optional().describe("Issuing company CIF. Falls back to SMARTBILL_VAT_CODE."),
 };

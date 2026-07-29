@@ -13,7 +13,12 @@ import {
 const ESTIMATE_SERIES_ENV = "SMARTBILL_ESTIMATE_SERIES";
 
 const estimateRefSchema = {
-  number: z.string().describe("Estimate number, without the series prefix."),
+  number: z
+    .string()
+    .describe(
+      "Estimate number as printed on the document, leading zeros included — '0021', not '21'. " +
+        "An unpadded number is reported as not found.",
+    ),
   seriesName: z.string().optional().describe("Estimate series. Falls back to the configured default."),
   companyVatCode: z.string().optional().describe("Issuing company CIF. Falls back to SMARTBILL_VAT_CODE."),
 };

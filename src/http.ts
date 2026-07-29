@@ -3,7 +3,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { buildConfig, type Credentials, type SmartBillConfig } from "./config.js";
 import { CredentialError, decodeBasicAuth, decodeCredentials } from "./credentials.js";
 import { renderLandingPage } from "./landing.js";
-import { createServer, SERVER_NAME, SERVER_VERSION } from "./server.js";
+import { BUILD_SHA, createServer, SERVER_NAME, SERVER_VERSION } from "./server.js";
 
 export interface HttpOptions {
   port: number;
@@ -68,7 +68,7 @@ export function createHttpTransport(
     const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
 
     if (url.pathname === "/health") {
-      sendJson(res, 200, { status: "ok" });
+      sendJson(res, 200, { status: "ok", version: SERVER_VERSION, commit: BUILD_SHA });
       return;
     }
 
@@ -81,6 +81,7 @@ export function createHttpTransport(
         sendJson(res, 200, {
           name: SERVER_NAME,
           version: SERVER_VERSION,
+          commit: BUILD_SHA,
           status: "ok",
           transport: "streamable-http",
           endpoint: `${options.path}/<credentials>`,

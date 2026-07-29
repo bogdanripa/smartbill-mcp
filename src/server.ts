@@ -10,6 +10,17 @@ import type { ToolContext } from "./tools/shared.js";
 export const SERVER_NAME = "smartbill-mcp";
 export const SERVER_VERSION = "0.1.0";
 
+/**
+ * The commit this image was built from, baked in at build time.
+ *
+ * During a redeploy the outgoing container is still serving, so a health check
+ * that only asks "did something answer 200?" is satisfied by the container being
+ * replaced. Reporting the build lets a caller wait for the one it just built
+ * instead, and tells anyone looking at a running box what is actually on it.
+ * "dev" outside a built image.
+ */
+export const BUILD_SHA = process.env.BUILD_SHA?.trim() || "dev";
+
 const INSTRUCTIONS = `Tools for SmartBill Cloud, the Romanian invoicing service. They act on one real
 company's books: everything issued here is a live fiscal document, not a sandbox.
 

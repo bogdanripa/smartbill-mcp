@@ -14,6 +14,11 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=80
 
+# Baked in so /health can report which build is answering. Without it a redeploy
+# cannot be distinguished from the outgoing container still serving.
+ARG BUILD_SHA=dev
+ENV BUILD_SHA=$BUILD_SHA
+
 # The platform requires the image to carry curl or wget so a healthcheck can
 # run, and its own injected check uses curl. Alpine ships only busybox wget.
 RUN apk add --no-cache curl

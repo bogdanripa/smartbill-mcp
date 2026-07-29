@@ -1,7 +1,7 @@
 import { EventEmitter } from "node:events";
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { decodeBasicAuth, decodeCredentials, encodeCredentials } from "../src/credentials.js";
 import { createHttpTransport, listen as startListening, loadHttpOptions, type HttpOptions } from "../src/http.js";
 
@@ -199,7 +199,21 @@ describe("HTTP transport", () => {
     const response = await fetch(`${base}/health`);
 
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ status: "ok" });
+    // `commit` is what lets a redeploy tell the new container from the old one
+    // still serving, so /health carries it alongside the liveness answer.
+    expect(await response.json()).toEqual({ status: "ok", version: "0.1.0", commit: "dev" });
+  });
+
+  it("takes the build marker from the environment, so the image reports its own commit", async () => {
+    vi.resetModules();
+    process.env.BUILD_SHA = "abc1234";
+    try {
+      const { BUILD_SHA } = await import("../src/server.js");
+      expect(BUILD_SHA).toBe("abc1234");
+    } finally {
+      delete process.env.BUILD_SHA;
+      vi.resetModules();
+    }
   });
 
   it("answers the root with JSON for health checks and API clients", async () => {

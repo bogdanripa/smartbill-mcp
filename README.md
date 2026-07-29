@@ -68,8 +68,18 @@ npm run start:http     # or: node dist/index.js --http
 | `MCP_ALLOWED_HOSTS` | — | Comma-separated `Host` values to accept (DNS rebinding protection). Unset accepts any. |
 
 No `SMARTBILL_*` secrets are read in this mode — the server holds none.
-`GET /health` answers `{"status":"ok"}` without credentials, for platform health
-checks.
+`GET /health` answers without credentials, for platform health checks:
+
+```json
+{ "status": "ok", "version": "0.1.0", "commit": "9f2c1ab..." }
+```
+
+`commit` is the git SHA the image was built from, baked in via the `BUILD_SHA`
+build argument (`"dev"` outside a built image). It exists because a redeploy
+leaves the outgoing container serving: a check that only asks for a 200 is
+answered by the container being replaced. The deploy workflow waits for
+`commit` to equal the SHA it just built, so it tests the new container rather
+than racing it.
 
 ### The setup page
 

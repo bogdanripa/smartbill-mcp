@@ -39,6 +39,8 @@ jobs:
         with:
           platforms: linux/arm64
           push: true
+          build-args: |
+            BUILD_SHA=${{ github.sha }}
           tags: |
             ghcr.io/bogdanripa/smartbill-mcp:latest
             ghcr.io/bogdanripa/smartbill-mcp:${{ steps.tag.outputs.value }}
@@ -57,17 +59,24 @@ jobs:
     needs: deploy
     runs-on: ubuntu-latest
     steps:
+      # Waiting for a 200 is not enough: during a redeploy the OUTGOING container
+      # is still serving, so /health answers immediately and the steps below then
+      # race a half-started container. /health reports the commit it was built
+      # from, so wait for THIS one.
       - name: Wait for the new container to serve /health
         id: health
         run: |
           URL=https://smartbill-mcp-coolify.bogdanripa.com
-          for i in $(seq 1 30); do
+          for i in $(seq 1 60); do
             CODE=$(curl -s -o /tmp/body -w '%{http_code}' --max-time 10 "$URL/health" || echo 000)
-            echo "attempt $i: GET /health -> $CODE $(head -c 200 /tmp/body | tr -d '\n')"
-            if [ "$CODE" = "200" ]; then echo "ok=true" >> $GITHUB_OUTPUT; exit 0; fi
+            SEEN=$(sed -n 's/.*"commit":"\([^"]*\)".*/\1/p' /tmp/body)
+            echo "attempt $i: GET /health -> $CODE commit=${SEEN:-none} (want ${GITHUB_SHA})"
+            if [ "$CODE" = "200" ] && [ "$SEEN" = "$GITHUB_SHA" ]; then
+              echo "ok=true" >> $GITHUB_OUTPUT; exit 0
+            fi
             sleep 10
           done
-          echo "::error::/health never returned 200. The container is not serving."
+          echo "::error::/health never reported commit ${GITHUB_SHA}. The new container is not serving."
           echo "Last response body:"; cat /tmp/body; echo
           exit 1
 

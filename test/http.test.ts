@@ -134,13 +134,55 @@ describe("HTTP transport", () => {
     expect(await response.json()).toEqual({ status: "ok" });
   });
 
-  it("serves a landing page at the root that doubles as a health target", async () => {
+  it("answers the root with JSON for health checks and API clients", async () => {
     const { base } = await listen();
 
     const response = await fetch(base);
 
     expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("application/json");
     expect(await response.json()).toMatchObject({ name: "smartbill-mcp", status: "ok" });
+  });
+
+  it("answers the root with the setup page for a browser", async () => {
+    const { base } = await listen();
+
+    const response = await fetch(base, { headers: { Accept: "text/html,application/xhtml+xml" } });
+    const html = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("text/html");
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.get("referrer-policy")).toBe("no-referrer");
+
+    // The three credentials, the series overrides, and where to find them.
+    for (const id of ["id=\"email\"", "id=\"token\"", "id=\"cif\""]) expect(html).toContain(id);
+    for (const id of ["invoiceSeries", "estimateSeries", "receiptSeries"]) expect(html).toContain(id);
+    expect(html).toContain("https://cloud.smartbill.ro/core/integrari/");
+    expect(html).toContain("Add custom connector");
+  });
+
+  it("builds the setup page against the configured mount path", async () => {
+    const { base } = await listen({ path: "/smartbill" });
+
+    const html = await (await fetch(base, { headers: { Accept: "text/html" } })).text();
+
+    expect(html).toContain('MOUNT_PATH = "/smartbill"');
+  });
+
+  it("keeps the setup page self-contained, so credentials cannot leak to a third party", async () => {
+    const { base } = await listen();
+
+    const html = await (await fetch(base, { headers: { Accept: "text/html" } })).text();
+
+    // Any external subresource could observe what the user types. Links are fine;
+    // src=, url() and fetch/XHR are not.
+    expect(html).not.toMatch(/<(script|img|iframe)[^>]+src=/i);
+    expect(html).not.toMatch(/<link[^>]+rel=["']?stylesheet/i);
+    expect(html).not.toMatch(/\burl\(\s*["']?https?:/i);
+    expect(html).not.toMatch(/\b(fetch|XMLHttpRequest|WebSocket|navigator\.sendBeacon)\b/);
+    // No form that could POST the token anywhere.
+    expect(html).not.toMatch(/<form\b/i);
   });
 
   it("completes the MCP handshake with credentials in the URL", async () => {

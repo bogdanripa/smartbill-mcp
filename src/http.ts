@@ -2,6 +2,7 @@ import { createServer as createHttpServer, type IncomingMessage, type Server, ty
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { buildConfig, type Credentials, type SmartBillConfig } from "./config.js";
 import { CredentialError, decodeBasicAuth, decodeCredentials } from "./credentials.js";
+import { renderLandingPage } from "./landing.js";
 import { createServer, SERVER_NAME, SERVER_VERSION } from "./server.js";
 
 export interface HttpOptions {
@@ -64,17 +65,22 @@ export function createHttpTransport(
       return;
     }
 
-    // The root doubles as a landing page and as a health target, so a platform
-    // health check works whether or not it is pointed at /health.
+    // A browser gets the setup page that builds a connector URL; anything else
+    // — health checks, curl, monitoring — keeps getting JSON.
     if (url.pathname === "/") {
-      sendJson(res, 200, {
-        name: SERVER_NAME,
-        version: SERVER_VERSION,
-        status: "ok",
-        transport: "streamable-http",
-        endpoint: `${options.path}/<credentials>`,
-        documentation: "https://github.com/bogdanripa/smartbill-mcp#running-over-http-multi-tenant",
-      });
+      if (wantsHtml(req)) {
+        sendHtml(res, 200, renderLandingPage(options.path));
+      } else {
+        sendJson(res, 200, {
+          name: SERVER_NAME,
+          version: SERVER_VERSION,
+          status: "ok",
+          transport: "streamable-http",
+          endpoint: `${options.path}/<credentials>`,
+          setup: "Open this URL in a browser to generate your connector URL.",
+          documentation: "https://github.com/bogdanripa/smartbill-mcp#running-over-http-multi-tenant",
+        });
+      }
       return;
     }
 
@@ -153,6 +159,24 @@ function headerValue(req: IncomingMessage, name: string): string | undefined {
   const raw = req.headers[name];
   const value = Array.isArray(raw) ? raw[0] : raw;
   return value?.trim() || undefined;
+}
+
+/** True when the caller is a browser rather than a health check or an API client. */
+function wantsHtml(req: IncomingMessage): boolean {
+  const accept = req.headers.accept;
+  return typeof accept === "string" && accept.includes("text/html");
+}
+
+function sendHtml(res: ServerResponse, status: number, html: string): void {
+  res.writeHead(status, {
+    "Content-Type": "text/html; charset=utf-8",
+    "Content-Length": Buffer.byteLength(html),
+    // The page holds credentials in the DOM while the user is on it.
+    "Cache-Control": "no-store",
+    "Referrer-Policy": "no-referrer",
+    "X-Content-Type-Options": "nosniff",
+  });
+  res.end(html);
 }
 
 function sendJson(res: ServerResponse, status: number, body: unknown): void {

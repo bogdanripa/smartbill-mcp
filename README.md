@@ -71,6 +71,22 @@ No `SMARTBILL_*` secrets are read in this mode — the server holds none.
 `GET /health` answers `{"status":"ok"}` without credentials, for platform health
 checks.
 
+### The setup page
+
+Opening the deployment's root in a browser serves a self-service page that
+explains what the server does, points at
+[the SmartBill integrations page](https://cloud.smartbill.ro/core/integrari/) for
+the three values it needs, and generates the connector URL.
+
+The page is entirely self-contained — no external scripts, styles or fonts, no
+`fetch`, no `<form>`. The URL is assembled in the browser from what the user
+types, so the token never reaches the server until it is used for a real MCP
+call. `test/http.test.ts` asserts that, so a future edit can't quietly add a
+third-party subresource that could observe the field.
+
+Non-browser callers (`Accept` without `text/html`) still get JSON at the root,
+so health checks and monitoring are unaffected.
+
 ### Credentials in the URL
 
 Each caller's credentials travel as one base64url segment of

@@ -38,3 +38,56 @@ jobs:
         run: |
           curl -fsS -X POST \
             "https://api-coolify.bogdanripa.com/apps/smartbill-mcp/refresh"
+
+  # The deploy above only asks the Pi to pull; it says nothing about whether the
+  # container then came up. This does, and its log is the only window into the
+  # running app for anyone who cannot reach the host directly.
+  smoke:
+    needs: deploy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wait for the new container to serve /health
+        id: health
+        run: |
+          URL=https://smartbill-mcp-coolify.bogdanripa.com
+          for i in $(seq 1 30); do
+            CODE=$(curl -s -o /tmp/body -w '%{http_code}' --max-time 10 "$URL/health" || echo 000)
+            echo "attempt $i: GET /health -> $CODE $(head -c 200 /tmp/body | tr -d '\n')"
+            if [ "$CODE" = "200" ]; then echo "ok=true" >> $GITHUB_OUTPUT; exit 0; fi
+            sleep 10
+          done
+          echo "::error::/health never returned 200. The container is not serving."
+          echo "Last response body:"; cat /tmp/body; echo
+          exit 1
+
+      - name: Setup page renders for a browser
+        run: |
+          URL=https://smartbill-mcp-coolify.bogdanripa.com
+          CODE=$(curl -s -o /tmp/page -w '%{http_code}' -H 'Accept: text/html' --max-time 15 "$URL/")
+          TYPE=$(curl -s -o /dev/null -w '%{content_type}' -H 'Accept: text/html' --max-time 15 "$URL/")
+          echo "GET / -> $CODE ($TYPE)"
+          test "$CODE" = "200" || { echo "::error::root returned $CODE"; head -c 500 /tmp/page; exit 1; }
+          grep -q "SmartBill MCP" /tmp/page || { echo "::error::setup page missing"; exit 1; }
+          grep -q "cloud.smartbill.ro/core/integrari" /tmp/page || { echo "::error::credentials link missing"; exit 1; }
+
+      - name: MCP endpoint answers a handshake
+        run: |
+          URL=https://smartbill-mcp-coolify.bogdanripa.com
+          # Syntactically valid but fake credentials: initialize must succeed
+          # without ever calling SmartBill, proving routing and auth parsing work.
+          CREDS=$(printf '%s' 'ci@example.com:fake-token:RO0000000' | base64 -w0 | tr '+/' '-_' | tr -d '=')
+          CODE=$(curl -s -o /tmp/mcp -w '%{http_code}' --max-time 15 -X POST "$URL/mcp/$CREDS" \
+            -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' \
+            -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci","version":"0"}}}')
+          echo "POST /mcp/<creds> -> $CODE"; head -c 300 /tmp/mcp; echo
+          test "$CODE" = "200" || { echo "::error::MCP handshake returned $CODE"; exit 1; }
+          grep -q '"serverInfo"' /tmp/mcp || { echo "::error::no serverInfo in response"; exit 1; }
+
+      - name: Unauthenticated MCP request is rejected
+        run: |
+          URL=https://smartbill-mcp-coolify.bogdanripa.com
+          CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 -X POST "$URL/mcp" \
+            -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' \
+            -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}')
+          echo "POST /mcp with no credentials -> $CODE"
+          test "$CODE" = "401" || { echo "::error::expected 401, got $CODE"; exit 1; }

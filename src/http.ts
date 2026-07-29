@@ -161,6 +161,36 @@ function headerValue(req: IncomingMessage, name: string): string | undefined {
   return value?.trim() || undefined;
 }
 
+/**
+ * Starts listening, turning the two failures that actually happen in a container
+ * into messages that say what to do. Without this a listen error leaves the
+ * start-up promise pending forever and surfaces as an unhandled 'error' event.
+ */
+export function listen(server: Server, options: HttpOptions): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const onError = (error: NodeJS.ErrnoException) => {
+      if (error.code === "EACCES" && options.port < 1024) {
+        reject(
+          new Error(
+            `Not allowed to bind port ${options.port}. Ports below 1024 need root or ` +
+              `CAP_NET_BIND_SERVICE — run the container as root, or set PORT to something above 1024.`,
+          ),
+        );
+      } else if (error.code === "EADDRINUSE") {
+        reject(new Error(`Port ${options.port} is already in use on ${options.host}.`));
+      } else {
+        reject(error);
+      }
+    };
+
+    server.once("error", onError);
+    server.listen(options.port, options.host, () => {
+      server.removeListener("error", onError);
+      resolve();
+    });
+  });
+}
+
 /** True when the caller is a browser rather than a health check or an API client. */
 function wantsHtml(req: IncomingMessage): boolean {
   const accept = req.headers.accept;

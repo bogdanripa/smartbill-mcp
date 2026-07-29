@@ -1,8 +1,9 @@
+import { EventEmitter } from "node:events";
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
 import { decodeBasicAuth, decodeCredentials, encodeCredentials } from "../src/credentials.js";
-import { createHttpTransport, loadHttpOptions, type HttpOptions } from "../src/http.js";
+import { createHttpTransport, listen as startListening, loadHttpOptions, type HttpOptions } from "../src/http.js";
 
 const servers: Server[] = [];
 
@@ -121,6 +122,40 @@ describe("loadHttpOptions", () => {
     const options = loadHttpOptions({ MCP_ALLOWED_HOSTS: "a.example.com, b.example.com " } as NodeJS.ProcessEnv);
 
     expect(options.allowedHosts).toEqual(["a.example.com", "b.example.com"]);
+  });
+});
+
+describe("listen", () => {
+  it("rejects with an actionable message when the port is taken", async () => {
+    const first = createHttpTransport({ port: 0, host: "127.0.0.1", path: "/mcp", allowedHosts: [] });
+    servers.push(first);
+    await new Promise<void>((resolve) => first.listen(0, "127.0.0.1", resolve));
+    const { port } = first.address() as AddressInfo;
+
+    const second = createHttpTransport({ port, host: "127.0.0.1", path: "/mcp", allowedHosts: [] });
+    servers.push(second);
+
+    await expect(
+      startListening(second, { port, host: "127.0.0.1", path: "/mcp", allowedHosts: [] }),
+    ).rejects.toThrow(/already in use/);
+  });
+
+  it("explains an EACCES on a privileged port instead of hanging", async () => {
+    // This is the failure that crash-looped the container: a non-root process
+    // cannot bind port 80, so listen() must reject rather than never resolve.
+    const failing = new EventEmitter() as unknown as Server;
+    (failing as unknown as { listen: () => void }).listen = () => {
+      queueMicrotask(() =>
+        (failing as unknown as EventEmitter).emit(
+          "error",
+          Object.assign(new Error("permission denied"), { code: "EACCES" }),
+        ),
+      );
+    };
+
+    await expect(
+      startListening(failing, { port: 80, host: "0.0.0.0", path: "/mcp", allowedHosts: [] }),
+    ).rejects.toThrow(/CAP_NET_BIND_SERVICE/);
   });
 });
 

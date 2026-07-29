@@ -20,7 +20,10 @@ RUN npm ci --omit=dev && npm cache clean --force
 COPY --from=build /app/dist ./dist
 
 EXPOSE 80
-USER node
+
+# Runs as root deliberately: the platform requires port 80, and binding a port
+# below 1024 needs either root or CAP_NET_BIND_SERVICE, which the container is
+# not guaranteed to keep. A non-root USER here fails with EACCES at startup.
 
 # Lets the platform tell a started container from a ready one, so a redeploy
 # does not cut over before the new one can serve. busybox wget ships in alpine.

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { ConfigError, loadConfig } from "./config.js";
-import { createHttpTransport, loadHttpOptions } from "./http.js";
+import { createHttpTransport, listen, loadHttpOptions } from "./http.js";
 import { createServer } from "./server.js";
 
 function wantsHttp(argv: string[], env: NodeJS.ProcessEnv): boolean {
@@ -14,7 +14,7 @@ async function main(): Promise<void> {
   if (wantsHttp(process.argv.slice(2), process.env)) {
     const options = loadHttpOptions();
     const server = createHttpTransport(options);
-    await new Promise<void>((resolve) => server.listen(options.port, options.host, resolve));
+    await listen(server, options);
     console.error(
       `smartbill-mcp listening on http://${options.host}:${options.port}${options.path}/<credentials>`,
     );

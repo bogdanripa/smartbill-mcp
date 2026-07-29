@@ -256,6 +256,21 @@ details are worth flagging:
 - `create_payment` sends the internal note as `observation`, singular. Invoices
   and proformas spell the same field `observations`.
 
+### What the API cannot do
+
+There is no way to enumerate anything. The published API is 20 paths, and every
+document read — `/invoice/paymentstatus`, `/invoice/pdf`, `/estimate/pdf`,
+`/estimate/invoices` — is keyed by `cif` + `seriesName` + `number`. There is no
+search, no date range, no pagination, and no customer resource of any kind:
+clients are only ever written, as a nested block on a document, with `saveToDb`
+persisting them into the nomenclator with no read path back out.
+
+So "all invoices for client ABC", "everything issued last month" and "list my
+customers" are not answerable through this API. `/tax`, `/series` and `/stocks`
+are the only endpoints that return a list. The server instructions tell the model
+this, so it reports the limitation instead of probing series numbers one at a
+time — which would also hit SmartBill's request rate limit.
+
 `create_invoice_from_estimate` sends `useEstimateDetails: true` with an
 `estimate` reference and no client block, letting SmartBill copy the client and
 line items from the proforma — this matches the documented

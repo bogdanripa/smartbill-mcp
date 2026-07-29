@@ -18,6 +18,14 @@ usually written "FF 120". A series can be omitted when the server has a default
 configured; otherwise call list_series to see what this account actually has.
 Never invent a series name or a VAT rate.
 
+Documents can only be fetched by series and number. There is no search, no date
+range and no per-client lookup, and SmartBill exposes no customer list at all —
+clients are only ever written, as part of a document. So "all invoices for client
+ABC", "everything issued last month" and "list my customers" cannot be answered
+here. Say that plainly instead of guessing numbers or probing series one at a
+time; the account is rate limited and will start refusing requests. list_series,
+list_taxes and list_stocks are the only listings that exist.
+
 Three document kinds, easy to confuse:
 - invoice (factura) — the fiscal document. create_invoice.
 - estimate (proforma) — a quote or payment request, not yet fiscal. create_estimate.

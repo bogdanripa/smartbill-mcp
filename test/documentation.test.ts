@@ -27,6 +27,12 @@ describe("server instructions", () => {
       expect(instructions).toContain(concept);
     }
   });
+
+  it("say that documents cannot be searched, only fetched by series and number", () => {
+    expect(instructions).toMatch(/only be fetched by series and number/i);
+    expect(instructions).toMatch(/no search/i);
+    expect(instructions).toMatch(/customer list/i);
+  });
 });
 
 describe("tool documentation", () => {

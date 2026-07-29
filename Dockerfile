@@ -14,6 +14,10 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=80
 
+# The platform requires the image to carry curl or wget so a healthcheck can
+# run, and its own injected check uses curl. Alpine ships only busybox wget.
+RUN apk add --no-cache curl
+
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 
@@ -26,10 +30,10 @@ EXPOSE 80
 # not guaranteed to keep. A non-root USER here fails with EACCES at startup.
 
 # Lets the platform tell a started container from a ready one, so a redeploy
-# does not cut over before the new one can serve. Uses node rather than curl or
-# wget: node is the one binary this image is guaranteed to have.
+# does not cut over before the new one can serve. Matches the platform's
+# documented example rather than diverging from it.
 HEALTHCHECK --interval=10s --timeout=3s --start-period=15s \
-  CMD node -e "fetch('http://127.0.0.1:80/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+  CMD curl -fsS http://localhost:80/health || exit 1
 
 # HTTP mode is multi-tenant: credentials arrive with each request, so no
 # SmartBill secrets are baked into the image.

@@ -36,11 +36,45 @@ const WIDGET_IDS = {
   total_overdue: "3573432",
 };
 
-const widget = process.argv[2] || "clients_balance";
-const widgetId = WIDGET_IDS[widget];
-if (!widgetId) {
-  console.error(`Unknown widget "${widget}". Known: ${Object.keys(WIDGET_IDS).join(", ")}`);
-  process.exit(2);
+// Two commands:
+//   node portal-probe.mjs <widget>          e.g. clients_balance | unpaid_invoices
+//   node portal-probe.mjs transactions --cif <cif> [--client "Name"] \
+//        [--from dd/mm/yyyy] [--to dd/mm/yyyy] [--client-id <id>]
+const command = process.argv[2] || "clients_balance";
+const isTransactions = command === "transactions";
+
+function parseFlags(argv) {
+  const out = {};
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i].startsWith("--")) {
+      const key = argv[i].slice(2).replace(/-([a-z])/g, (_, c) => c.toUpperCase());
+      out[key] = argv[i + 1] && !argv[i + 1].startsWith("--") ? argv[++i] : "true";
+    }
+  }
+  return out;
+}
+
+let widget, widgetId, TX;
+if (isTransactions) {
+  const f = parseFlags(process.argv.slice(3));
+  TX = {
+    cif: f.cif,
+    client: f.client,
+    clientId: f.clientId,
+    from: f.from || "01/01/2026",
+    to: f.to || "31/12/2026",
+  };
+  if (!TX.cif) {
+    console.error('transactions needs --cif <cif>  (e.g. --cif 38909947 --client "DRUID S.A.")');
+    process.exit(2);
+  }
+} else {
+  widget = command;
+  widgetId = WIDGET_IDS[widget];
+  if (!widgetId) {
+    console.error(`Unknown widget "${widget}". Known: ${Object.keys(WIDGET_IDS).join(", ")}`);
+    process.exit(2);
+  }
 }
 
 // ---- credentials (from .env or the environment; never persisted) ----------
@@ -170,9 +204,9 @@ async function login(jar) {
   console.error(`• signed in; cookies now: ${Object.keys(jar).join(", ")}`);
 }
 
-// ---- widget call ----------------------------------------------------------
-async function callWidget(jar) {
-  const res = await fetch(`${BASE}/dashboard/widget/data/${widget}/`, {
+// ---- generic authenticated JSON POST --------------------------------------
+async function portalPost(jar, path, bodyParams) {
+  const res = await fetch(`${BASE}${path}`, {
     method: "POST",
     redirect: "manual",
     headers: {
@@ -184,10 +218,32 @@ async function callWidget(jar) {
       Referer: `${BASE}/`,
       Cookie: cookieHeader(jar),
     },
-    body: new URLSearchParams({ widget_dashboard_id: widgetId }),
+    body: new URLSearchParams(bodyParams),
   });
   const text = await res.text();
   return { res, text };
+}
+
+const callWidget = (jar) =>
+  portalPost(jar, `/dashboard/widget/data/${widget}/`, { widget_dashboard_id: widgetId });
+
+// Client statement ("fisa client"): every document for one client over a date
+// range. client_id is left EMPTY on purpose — we want to learn whether the CIF
+// alone identifies the client, since the internal id differs between endpoints.
+function callTransactions(jar) {
+  const sSearch = {
+    client: TX.client || "",
+    from: TX.from,
+    to: TX.to,
+    results_per_page: 200,
+    currency: "0",
+    document_type: "",
+    document_number: "",
+    client_id: TX.clientId || "",
+    fisa_client_cif: TX.cif,
+    fisa_client: true,
+  };
+  return portalPost(jar, "/raport/lista_tranzactii/ajax/", { sSearch: JSON.stringify(sSearch) });
 }
 
 // A response is "not authenticated" if the server bounced us to login (302),
@@ -219,23 +275,26 @@ function looksUnauthenticated({ res, text }) {
   if (hadSession) console.error(`• reusing saved session (${Object.keys(jar).join(", ")})`);
   else console.error("• no saved session");
 
+  const doCall = isTransactions ? callTransactions : callWidget;
+  const label = isTransactions ? `transactions cif=${TX.cif}` : widget;
+
   let result;
   if (hadSession) {
-    result = await callWidget(jar);
+    result = await doCall(jar);
     if (looksUnauthenticated(result)) {
       console.error(`• saved session rejected (status ${result.res.status}) → re-authenticating`);
       await login(jar);
-      result = await callWidget(jar);
+      result = await doCall(jar);
     } else {
       // session still valid — persist any refreshed cookies
       saveJar(jar);
     }
   } else {
     await login(jar);
-    result = await callWidget(jar);
+    result = await doCall(jar);
   }
 
-  console.error(`• GET ${widget} → HTTP ${result.res.status}`);
+  console.error(`• ${label} → HTTP ${result.res.status}`);
   if (looksUnauthenticated(result)) {
     console.error("✗ still not authenticated after logging in — see body below:");
     console.log(result.text);

@@ -71,10 +71,12 @@ export function renderHomePage(connectorUrl: string): string {
 
   <h2>What you can ask it to do</h2>
   <div class="grid">
-    <div class="card"><h3>Issue &amp; send documents</h3><p>Invoices and proformas, convert a proforma to an invoice, storno a mistake, e-mail any of them to the client.</p></div>
+    <div class="card"><h3>Issue &amp; send documents</h3><p>Invoices and proformas, convert a proforma to an invoice, and e-mail any of them straight to the client.</p></div>
     <div class="card"><h3>Track the money</h3><p>Record payments, see how much of an invoice is collected, and pull the receivables/aging report — who owes you and for how long.</p></div>
     <div class="card"><h3>Know your customers</h3><p>List your customers and read any client's statement, ledger and outstanding balance.</p></div>
-    <div class="card"><h3>Read the books</h3><p>Collections received, product-sales breakdowns, VAT rates, series and stock levels — and the real PDF of any document.</p></div>
+    <div class="card"><h3>Read the books</h3><p>Collections received, product-sales breakdowns, VAT rates, series and stock levels.</p></div>
+    <div class="card"><h3>Fix mistakes safely</h3><p>Cancel and restore a document, issue a storno correction, or delete the last one — with the right, reversible undo for each.</p></div>
+    <div class="card"><h3>Grab the PDF</h3><p>Pull the real PDF of any invoice or proforma to view or save, or read the text of a fiscal receipt.</p></div>
   </div>
 
   <h2>Connect it in three steps</h2>

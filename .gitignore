@@ -6,3 +6,6 @@ dist/
 !.env.example
 downloads/
 .DS_Store
+
+# Experimental portal probe: saved SmartBill Cloud session cookies (a live login).
+.smartbill-session.json

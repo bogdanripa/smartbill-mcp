@@ -70,8 +70,15 @@ export function renderAuthorizePage({ params, clientName, error }: AuthorizePage
     border:1px solid var(--line); border-radius:8px; font:inherit; font-size:.95rem; }
   input:focus { outline:2px solid var(--accent); outline-offset:1px; border-color:transparent; }
   button { width:100%; padding:.7rem 1.1rem; border:0; border-radius:8px; background:var(--accent);
-    color:var(--accent-fg); font:inherit; font-weight:600; cursor:pointer; }
+    color:var(--accent-fg); font:inherit; font-weight:600; cursor:pointer;
+    display:inline-flex; align-items:center; justify-content:center; gap:.5em; }
   button:hover { filter:brightness(1.08); }
+  button.loading { opacity:.75; cursor:default; }
+  button[disabled] { cursor:default; }
+  .spin { display:none; width:1em; height:1em; border:2px solid currentColor; border-right-color:transparent;
+    border-radius:50%; animation:spin .6s linear infinite; }
+  button.loading .spin { display:inline-block; }
+  @keyframes spin { to { transform:rotate(360deg); } }
   .error { background:#fdecea; border:1px solid #f5c6cb; color:#a12; border-radius:8px;
     padding:.6rem .8rem; font-size:.9rem; margin-bottom:1rem; }
   @media (prefers-color-scheme: dark) { .error { background:#3a1d1d; border-color:#5c2a2a; color:#ff9b93; } }
@@ -92,9 +99,22 @@ export function renderAuthorizePage({ params, clientName, error }: AuthorizePage
       <input id="email" name="email" type="email" placeholder="you@company.ro" autocomplete="username" required spellcheck="false">
       <label for="password">SmartBill password</label>
       <input id="password" name="password" type="password" placeholder="••••••••" autocomplete="current-password" required>
-      <button type="submit">Authorize</button>
+      <button id="authorize" type="submit"><span class="spin" aria-hidden="true"></span><span class="label">Authorize</span></button>
     </form>
   </div>
+  <script>
+  (function () {
+    var form = document.querySelector('form');
+    var btn = document.getElementById('authorize');
+    form.addEventListener('submit', function () {
+      // The submit is already in flight; reflect it and block a double-click.
+      btn.classList.add('loading');
+      var label = btn.querySelector('.label');
+      if (label) label.textContent = 'Signing in…';
+      setTimeout(function () { btn.disabled = true; }, 0);
+    });
+  })();
+  </script>
   <div class="warn">
     <p>Your email and password are sent over HTTPS only to this server, used to sign in to SmartBill, and stored
     encrypted so the connection keeps working. The application never sees them.</p>

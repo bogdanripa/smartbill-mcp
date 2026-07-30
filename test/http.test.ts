@@ -283,6 +283,9 @@ describe("OAuth", () => {
 
     expect(html).toContain("Connect your SmartBill account");
     expect(html).toContain('name="password"');
+    // The Authorize button shows a loading state on submit.
+    expect(html).toContain('class="spin"');
+    expect(html).toMatch(/addEventListener\(['"]submit['"]/);
   });
 
   it("rejects an authorize request for an unregistered redirect_uri without redirecting", async () => {

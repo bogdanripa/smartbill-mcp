@@ -44,23 +44,57 @@ export function resolveSeries(
 
 export const documentDeliverySchema = {
   as: z
-    .enum(["file", "base64"])
+    .enum(["text", "file", "base64"])
     .optional()
     .describe(
-      "How to return the PDF: 'file' writes it to the server's download directory and returns the path; " +
-        "'base64' returns the bytes inline. Defaults to whichever suits the transport in use.",
+      "What to do with the PDF.\n" +
+        "'text' extracts the document's text and returns it — use this to READ the document (issue date, client, " +
+        "line items, currency). This is the only mode whose result you can actually inspect.\n" +
+        "'file' writes the PDF to a directory on the SERVER running this tool and returns that path. Over HTTP " +
+        "the server is a different machine, so the path is unreachable for you and for the user — it is only " +
+        "useful when the client shares a filesystem with the server.\n" +
+        "'base64' returns the raw bytes encoded. You cannot decode these or turn them back into a file for the " +
+        "user; do not offer base64 as a way to deliver a document. It exists for a programmatic caller.\n" +
+        "Defaults to 'text' over HTTP.",
     ),
 };
+
+/**
+ * Pulls the text layer out of a PDF.
+ *
+ * Every field on an invoice except its amounts — issue date, client, line items,
+ * the currency — exists only inside the PDF; no SmartBill endpoint returns them.
+ * Without this, that information is unreachable: a path points into the server's
+ * own container and base64 cannot be read back by a language model.
+ */
+export async function extractPdfText(bytes: Uint8Array): Promise<{ text: string; pages: number }> {
+  const { extractText, getDocumentProxy } = await import("unpdf");
+  const pdf = await getDocumentProxy(new Uint8Array(bytes));
+  const { text, totalPages } = await extractText(pdf, { mergePages: true });
+  return { text: Array.isArray(text) ? text.join("\n") : text, pages: totalPages };
+}
 
 export async function deliverPdf(
   binary: BinaryResponse,
   fallbackName: string,
   config: SmartBillConfig,
-  as?: "file" | "base64",
+  as?: "text" | "file" | "base64",
 ): Promise<ToolResult> {
   const filename = sanitiseFilename(binary.filename ?? fallbackName);
+  const mode = as ?? config.defaultPdfDelivery;
 
-  if ((as ?? config.defaultPdfDelivery) === "base64") {
+  if (mode === "text") {
+    const { text, pages } = await extractPdfText(binary.bytes);
+    return jsonResult({
+      filename,
+      mimeType: binary.contentType,
+      byteLength: binary.bytes.byteLength,
+      pages,
+      text,
+    });
+  }
+
+  if (mode === "base64") {
     return jsonResult({
       filename,
       mimeType: binary.contentType,

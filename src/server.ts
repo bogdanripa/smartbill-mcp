@@ -44,6 +44,18 @@ report which — an invoice in EUR looks exactly like one in RON. Never attach a
 currency you have not verified. Give the figure unqualified, or read the
 currency off the document with get_invoice_pdf first.
 
+Almost everything about a document lives only inside its PDF. No endpoint returns
+an invoice's issue date, its client, or its line items — get_invoice_payment_status
+gives amounts and a paid flag, and that is all. To answer "when was this issued?"
+or "who was it for?", call get_invoice_pdf with as: "text", which returns the
+document's text. Do not conclude the information is unavailable.
+
+The other delivery modes are not ways to hand a file to anyone, and offering them
+wastes a turn. "file" writes to this server's own disk — over HTTP that is a
+different machine with no route to serve it back. "base64" returns bytes you
+cannot decode or reassemble into a document. When the user wants the file itself,
+send_document_email mails it from SmartBill, or point them at SmartBill Cloud.
+
 Documents can only be fetched by series and number. There is no search, no date
 range and no per-client lookup, and SmartBill exposes no customer list at all —
 clients are only ever written, as part of a document. So "all invoices for client

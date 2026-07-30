@@ -266,6 +266,27 @@ details are worth flagging:
 - `create_payment` sends the internal note as `observation`, singular. Invoices
   and proformas spell the same field `observations`.
 
+### Document details live only in the PDF
+
+No endpoint returns an invoice's issue date, client or line items.
+`/invoice/paymentstatus` gives three amounts and a `paid` flag; that is the whole
+of the structured data available about an issued document. Everything else exists
+only as rendered text inside the PDF.
+
+`get_invoice_pdf` and `get_estimate_pdf` therefore default to `as: "text"`, which
+extracts the text layer (via `unpdf`, no system dependency) and returns it. That
+is the only mode whose output a caller can actually inspect:
+
+- `file` writes the PDF to `SMARTBILL_DOWNLOAD_DIR` on the machine running the
+  server. Over HTTP that is a different machine, and nothing is served from that
+  directory — the file lands somewhere the caller cannot reach. Useful only for
+  stdio, where client and server share a filesystem.
+- `base64` returns the raw bytes. A programmatic caller can decode them; a
+  language model cannot, and cannot reassemble them into a file either.
+
+So neither is a way to deliver a document to a person. `send_document_email` has
+SmartBill mail it, which is.
+
 ### Amounts carry no currency
 
 `GET /invoice/paymentstatus` returns `invoiceTotalAmount`, `paidAmount` and

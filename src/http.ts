@@ -99,7 +99,7 @@ export function createHttpTransport(
 
     let config: SmartBillConfig;
     try {
-      config = buildConfig(resolveCredentials(req, url, options.path), { defaultPdfDelivery: "base64" }, env);
+      config = buildConfig(resolveCredentials(req, url, options.path), { defaultPdfDelivery: "text" }, env);
     } catch (error) {
       if (!(error instanceof CredentialError)) throw error;
       res.setHeader("WWW-Authenticate", 'Basic realm="smartbill-mcp"');

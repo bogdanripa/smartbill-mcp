@@ -276,6 +276,39 @@ describe("invoice lifecycle tools", () => {
   });
 });
 
+/**
+ * A one-page PDF reading "Factura GNZ-0159 / KKG Legal Kubas / Data: 28.07.2026
+ * / Total: 1250 EUR" — the shape of the metadata that lives nowhere but the PDF.
+ */
+const SAMPLE_PDF_BASE64 =
+  "JVBERi0xLjQKMSAwIG9iajw8L1R5cGUvQ2F0YWxvZy9QYWdlcyAyIDAgUj4+ZW5kb2JqCjIgMCBvYmo8PC9UeXBlL1BhZ2VzL0tpZHNbMyAwIFJdL0NvdW50IDE+PmVuZG9iagozIDAgb2JqPDwvVHlwZS9QYWdlL1BhcmVudCAyIDAgUi9NZWRpYUJveFswIDAgMzAwIDIwMF0vQ29udGVudHMgNCAwIFIvUmVzb3VyY2VzPDwvRm9udDw8L0YxIDUgMCBSPj4+Pj4+ZW5kb2JqCjQgMCBvYmo8PC9MZW5ndGggMTM4Pj5zdHJlYW0KQlQgL0YxIDEyIFRmIDIwIDE1MCBUZCAoRmFjdHVyYSBHTlotMDE1OSkgVGogMCAtMjAgVGQgKEtLRyBMZWdhbCBLdWJhcykgVGogMCAtMjAgVGQgKERhdGE6IDI4LjA3LjIwMjYpIFRqIDAgLTIwIFRkIChUb3RhbDogMTI1MCBFVVIpIFRqIEVUCmVuZHN0cmVhbWVuZG9iago1IDAgb2JqPDwvVHlwZS9Gb250L1N1YnR5cGUvVHlwZTEvQmFzZUZvbnQvSGVsdmV0aWNhPj5lbmRvYmoKeHJlZgowIDYKMDAwMDAwMDAwMCA2NTUzNSBmIAowMDAwMDAwMDA5IDAwMDAwIG4gCjAwMDAwMDAwNTIgMDAwMDAgbiAKMDAwMDAwMDEwMSAwMDAwMCBuIAowMDAwMDAwMjExIDAwMDAwIG4gCjAwMDAwMDAzOTUgMDAwMDAgbiAKdHJhaWxlcjw8L1NpemUgNi9Sb290IDEgMCBSPj4Kc3RhcnR4cmVmCjQ1NgolJUVPRgo=";
+
+describe("PDF text extraction", () => {
+  it("returns the document's text, the only place its date and client exist", async () => {
+    // get_invoice_payment_status reports amounts and nothing else, so without
+    // this the issue date and client are unreachable: a file path points inside
+    // the server's container and base64 cannot be read back.
+    const { client } = await connect([
+      {
+        body: new Uint8Array(Buffer.from(SAMPLE_PDF_BASE64, "base64")),
+        headers: { "content-type": "application/octet-stream" },
+      },
+    ]);
+
+    const payload = jsonOf(
+      await client.callTool({ name: "get_invoice_pdf", arguments: { number: "0159", as: "text" } }),
+    );
+
+    expect(payload.pages).toBe(1);
+    expect(payload.text).toContain("GNZ-0159");
+    expect(payload.text).toContain("KKG Legal Kubas");
+    expect(payload.text).toContain("28.07.2026");
+    expect(payload.text).toContain("1250 EUR");
+    expect(payload.base64).toBeUndefined();
+    expect(payload.path).toBeUndefined();
+  });
+});
+
 describe("PDF download", () => {
   it("writes the PDF to the download directory and returns its path", async () => {
     const downloadDir = path.join(tmpdir(), `smartbill-mcp-test-${process.pid}-${tempDirs.length}`);

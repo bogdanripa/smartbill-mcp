@@ -61,13 +61,15 @@ export function registerEstimateTools(server: McpServer, ctx: ToolContext): void
   server.registerTool(
     "get_estimate_pdf",
     {
-      title: "Download estimate PDF",
+      title: "Read estimate PDF",
       description:
-        "Fetch the PDF of an already-issued proforma, for when the user wants the document itself. Read-only.\n\n" +
-        "Returns either a path on the server's filesystem or base64 bytes, depending on how the server is running; " +
-        "force one with `as`. To send the proforma to the client by email, use send_document_email instead.",
+        "Read an already-issued proforma. Defaults to returning its TEXT, which is the only way to see the " +
+        "proforma's date, client or line items — no SmartBill endpoint reports those. Read-only.\n\n" +
+        "The other `as` modes are not ways to hand a document to the user: 'file' writes to the server's own disk, " +
+        "unreachable over HTTP, and 'base64' returns bytes you cannot decode. To get the document to someone, use " +
+        "send_document_email.",
       inputSchema: { ...estimateRefSchema, ...documentDeliverySchema },
-      annotations: { title: "Download estimate PDF", readOnlyHint: true },
+      annotations: { title: "Read estimate PDF", readOnlyHint: true },
     },
     async (args) => {
       const seriesName = series(args.seriesName);

@@ -152,15 +152,19 @@ export function registerInvoiceTools(server: McpServer, ctx: ToolContext): void 
   server.registerTool(
     "get_invoice_pdf",
     {
-      title: "Download invoice PDF",
+      title: "Read invoice PDF",
       description:
-        "Fetch the PDF of an already-issued invoice, for when the user wants the document itself — to read it, " +
-        "attach it somewhere, or save a copy. Read-only.\n\n" +
-        "Returns either a path on the server's filesystem or base64 bytes, depending on how the server is running; " +
-        "force one with `as`. To send the invoice to the client by email, use send_document_email instead — that " +
-        "does not require downloading it first.",
+        "Read an already-issued invoice. Defaults to returning its TEXT, which is the only way to see an " +
+        "invoice's issue date, client, line items or currency — no SmartBill endpoint reports those, they exist " +
+        "only inside the document. Read-only.\n\n" +
+        "Use this whenever you need any detail beyond the amounts that get_invoice_payment_status returns, and to " +
+        "establish an invoice's currency before quoting a figure.\n\n" +
+        "The other `as` modes are not ways to hand a document to the user. 'file' writes to the server's own disk, " +
+        "which over HTTP is a different machine with no route to serve it back. 'base64' returns bytes you cannot " +
+        "decode or reassemble — never offer it as a means of delivering a PDF. If the user wants the actual file, " +
+        "send_document_email mails it from SmartBill, or point them at SmartBill Cloud.",
       inputSchema: { ...invoiceRefSchema, ...documentDeliverySchema },
-      annotations: { title: "Download invoice PDF", readOnlyHint: true },
+      annotations: { title: "Read invoice PDF", readOnlyHint: true },
     },
     async (args) => {
       const seriesName = series(args.seriesName);

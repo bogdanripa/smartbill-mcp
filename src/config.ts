@@ -14,9 +14,9 @@ export interface SmartBillConfig {
   /**
    * How PDFs are returned when the caller does not say. Writing a file only helps
    * a client that shares a filesystem with the server, so hosted deployments
-   * default to base64.
+   * default to "text" — the only form a remote caller can actually read.
    */
-  defaultPdfDelivery: "file" | "base64";
+  defaultPdfDelivery: "text" | "file" | "base64";
   baseUrl: string;
 }
 

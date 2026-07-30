@@ -80,34 +80,33 @@ jobs:
           echo "Last response body:"; cat /tmp/body; echo
           exit 1
 
-      - name: Setup page renders for a browser
+      - name: Homepage renders for a browser
         run: |
           URL=https://smartbill-mcp-coolify.bogdanripa.com
           CODE=$(curl -s -o /tmp/page -w '%{http_code}' -H 'Accept: text/html' --max-time 15 "$URL/")
           TYPE=$(curl -s -o /dev/null -w '%{content_type}' -H 'Accept: text/html' --max-time 15 "$URL/")
           echo "GET / -> $CODE ($TYPE)"
           test "$CODE" = "200" || { echo "::error::root returned $CODE"; head -c 500 /tmp/page; exit 1; }
-          grep -q "SmartBill MCP" /tmp/page || { echo "::error::setup page missing"; exit 1; }
-          grep -q 'id="password"' /tmp/page || { echo "::error::sign-in form missing"; exit 1; }
+          grep -q "SmartBill MCP" /tmp/page || { echo "::error::homepage missing"; exit 1; }
+          grep -q "Add custom connector" /tmp/page || { echo "::error::connect instructions missing"; exit 1; }
 
-      - name: MCP endpoint answers a handshake
+      - name: OAuth discovery metadata is served
         run: |
           URL=https://smartbill-mcp-coolify.bogdanripa.com
-          # Syntactically valid but fake credentials: initialize must succeed
-          # without ever calling SmartBill, proving routing and auth parsing work.
-          CREDS=$(printf '%s' 'ci@example.com:fake-token:RO0000000' | base64 -w0 | tr '+/' '-_' | tr -d '=')
-          CODE=$(curl -s -o /tmp/mcp -w '%{http_code}' --max-time 15 -X POST "$URL/mcp/$CREDS" \
-            -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' \
-            -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci","version":"0"}}}')
-          echo "POST /mcp/<creds> -> $CODE"; head -c 300 /tmp/mcp; echo
-          test "$CODE" = "200" || { echo "::error::MCP handshake returned $CODE"; exit 1; }
-          grep -q '"serverInfo"' /tmp/mcp || { echo "::error::no serverInfo in response"; exit 1; }
+          CODE=$(curl -s -o /tmp/asm -w '%{http_code}' --max-time 15 "$URL/.well-known/oauth-authorization-server")
+          echo "GET /.well-known/oauth-authorization-server -> $CODE"; head -c 300 /tmp/asm; echo
+          test "$CODE" = "200" || { echo "::error::AS metadata returned $CODE"; exit 1; }
+          grep -q '"authorization_endpoint"' /tmp/asm || { echo "::error::no authorization_endpoint"; exit 1; }
+          RS=$(curl -s -o /tmp/rsm -w '%{http_code}' --max-time 15 "$URL/.well-known/oauth-protected-resource")
+          echo "GET /.well-known/oauth-protected-resource -> $RS"; head -c 300 /tmp/rsm; echo
+          test "$RS" = "200" || { echo "::error::PRM returned $RS"; exit 1; }
 
-      - name: Unauthenticated MCP request is rejected
+      - name: Unauthenticated MCP request is challenged
         run: |
           URL=https://smartbill-mcp-coolify.bogdanripa.com
-          CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 -X POST "$URL/mcp" \
+          CODE=$(curl -s -D /tmp/hdr -o /dev/null -w '%{http_code}' --max-time 15 -X POST "$URL/mcp" \
             -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' \
             -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}')
-          echo "POST /mcp with no credentials -> $CODE"
+          echo "POST /mcp with no token -> $CODE"
           test "$CODE" = "401" || { echo "::error::expected 401, got $CODE"; exit 1; }
+          grep -iq 'www-authenticate' /tmp/hdr || { echo "::error::missing WWW-Authenticate challenge"; exit 1; }

@@ -5,8 +5,7 @@
   "license": "MIT",
   "type": "module",
   "bin": {
-    "smartbill-mcp": "dist/index.js",
-    "smartbill-mcp-url": "dist/make-url.js"
+    "smartbill-mcp": "dist/index.js"
   },
   "main": "dist/index.js",
   "files": [
@@ -20,7 +19,6 @@
     "dev": "tsx src/index.ts",
     "start": "node dist/index.js",
     "start:http": "node dist/index.js --http",
-    "make-url": "tsx src/make-url.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",

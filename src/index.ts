@@ -2,7 +2,7 @@
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { ConfigError, loadConfig } from "./config.js";
 import { createHttpTransport, listen, loadHttpOptions } from "./http.js";
-import { createPortalService } from "./portal/setup.js";
+import { createHostedRuntime } from "./portal/setup.js";
 import { createServer } from "./server.js";
 
 function wantsHttp(argv: string[], env: NodeJS.ProcessEnv): boolean {
@@ -14,14 +14,13 @@ async function main(): Promise<void> {
   // server itself needs none and loadConfig() is deliberately not called.
   if (wantsHttp(process.argv.slice(2), process.env)) {
     const options = loadHttpOptions();
-    // Enables the session-based portal tools when DATABASE_URL + SMARTBILL_SESSION_KEY
-    // are present; otherwise the server runs public-API-only, exactly as before.
-    const portal = await createPortalService();
-    const server = createHttpTransport(options, process.env, undefined, portal);
+    // The hosted runtime (OAuth authorization server + portal report tools) needs
+    // DATABASE_URL + SMARTBILL_SESSION_KEY. Without it the HTTP server has no way
+    // to authenticate callers and refuses MCP requests.
+    const runtime = await createHostedRuntime();
+    const server = createHttpTransport(options, process.env, undefined, runtime);
     await listen(server, options);
-    console.error(
-      `smartbill-mcp listening on http://${options.host}:${options.port}${options.path}/<credentials>`,
-    );
+    console.error(`smartbill-mcp listening on http://${options.host}:${options.port} (MCP at ${options.path})`);
 
     for (const signal of ["SIGTERM", "SIGINT"] as const) {
       process.on(signal, () => server.close(() => process.exit(0)));

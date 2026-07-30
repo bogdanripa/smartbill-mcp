@@ -30,28 +30,14 @@ interface TenantRow {
 }
 
 export class PostgresTenantStore implements TenantStore {
-  private readonly pool: pg.Pool;
-
   constructor(
-    connectionString: string,
+    private readonly pool: pg.Pool,
     private readonly key: Buffer,
-  ) {
-    this.pool = new pg.Pool({ connectionString });
-    // An idle backend connection dropped by the server emits 'error' on the pool;
-    // unhandled, that event would crash the whole process. Log and let the pool
-    // recycle the connection on the next query.
-    this.pool.on("error", (error) => {
-      console.error("smartbill-mcp: postgres pool error:", error instanceof Error ? error.message : error);
-    });
-  }
+  ) {}
 
   /** Creates the table if needed. Call once at startup. */
   async init(): Promise<void> {
     await this.pool.query(CREATE_TABLE);
-  }
-
-  async close(): Promise<void> {
-    await this.pool.end();
   }
 
   private normalise(email: string): string {

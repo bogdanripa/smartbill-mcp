@@ -237,6 +237,28 @@ const COMMANDS = {
     }),
   },
 
+  // --- Integrations page: scrape the PUBLIC API token ----------------------
+  // HTML page (GET), not JSON. It embeds the scoped public-API credentials in a
+  // "contact your developer" mailto template. Extracting them lets a portal
+  // login bootstrap the SAFE public-API token (email:token:cif) automatically,
+  // so real API calls use the revocable token — the password only fetches it.
+  integrations: {
+    path: "/core/integrari/",
+    method: "GET",
+    desc: "scrape public API token + CIF from the integrations page (bootstraps the scoped API credentials)",
+    extract: (html) => {
+      const pick = (re) => {
+        const m = html.match(re);
+        return m ? m[1].trim() : null;
+      };
+      return {
+        user: pick(/User-ul meu este\s+(.+?)%0D/),
+        token: pick(/Token-ul este\s+(.+?)%0D/),
+        cif: pick(/CIF-ul firmei este\s+([A-Z0-9]+)/),
+      };
+    },
+  },
+
   // --- Client details lookup by name + CIF ---------------------------------
   // NOTE: plain form fields, NOT an sSearch JSON blob. Returns the full client
   // record: address, city/county/country, reg_com, email, iban/bank,
@@ -425,6 +447,21 @@ async function portalPost(jar, path, bodyObj) {
   return { res, text };
 }
 
+// GET a page (some endpoints, like the integrations page, are plain HTML).
+async function portalGet(jar, path) {
+  const res = await fetch(`${BASE}${path}`, {
+    method: "GET",
+    redirect: "manual",
+    headers: {
+      Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      Cookie: cookieHeader(jar),
+      Referer: `${BASE}/`,
+    },
+  });
+  const text = await res.text();
+  return { res, text };
+}
+
 function looksUnauthenticated({ res, text }) {
   if (res.status === 401 || res.status === 403) return true;
   if (res.status >= 300 && res.status < 400) {
@@ -448,7 +485,8 @@ function looksUnauthenticated({ res, text }) {
   const hadSession = Object.keys(jar).length > 0;
   console.error(hadSession ? `• reusing saved session (${Object.keys(jar).join(", ")})` : "• no saved session");
 
-  const doCall = (j) => portalPost(j, spec.path, spec.build(flags));
+  const doCall = (j) =>
+    spec.method === "GET" ? portalGet(j, spec.path) : portalPost(j, spec.path, spec.build(flags));
 
   let result;
   if (hadSession) {
@@ -465,16 +503,20 @@ function looksUnauthenticated({ res, text }) {
     result = await doCall(jar);
   }
 
-  console.error(`• ${command}  POST ${spec.path} → HTTP ${result.res.status}`);
+  console.error(`• ${command}  ${spec.method || "POST"} ${spec.path} → HTTP ${result.res.status}`);
   if (looksUnauthenticated(result)) {
     console.error("✗ still not authenticated after logging in — body below:");
     console.log(result.text);
     process.exit(1);
   }
-  try {
-    console.log(JSON.stringify(JSON.parse(result.text), null, 2));
-  } catch {
-    console.log(result.text);
+  if (spec.extract) {
+    console.log(JSON.stringify(spec.extract(result.text), null, 2));
+  } else {
+    try {
+      console.log(JSON.stringify(JSON.parse(result.text), null, 2));
+    } catch {
+      console.log(result.text);
+    }
   }
 })().catch((err) => {
   console.error(`✗ ${err.message}`);

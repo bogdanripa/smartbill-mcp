@@ -122,7 +122,7 @@ async function login(jar) {
     password: PWD,
     next: "/",
   });
-  const loginRes = await fetch(`${BASE}/auth/login/?next=/`, {
+  let res = await fetch(`${BASE}/auth/login/?next=/`, {
     method: "POST",
     redirect: "manual",
     headers: {
@@ -133,19 +133,41 @@ async function login(jar) {
     },
     body,
   });
-  absorb(jar, loginRes);
+  absorb(jar, res);
 
-  // Success = a redirect (302) away from the login page. A 200 means we were
-  // handed the login form back — bad credentials, or an MFA/interstitial step.
-  const location = loginRes.headers.get("location") || "";
-  if (loginRes.status !== 302 || /\/auth\/login/.test(location)) {
+  // SmartBill's login is multi-hop: POST credentials -> 302 to a one-time
+  // /auth/login-key/<token>/ URL -> GET that (it sets the session) -> 302 to /.
+  // Follow the chain, absorbing cookies at each hop. A redirect back to the
+  // login FORM itself (/auth/login/) is the real failure — bad creds or MFA.
+  for (let hop = 0; hop < 6 && res.status >= 300 && res.status < 400; hop++) {
+    const location = res.headers.get("location");
+    if (!location) break;
+    const next = new URL(location, BASE);
+    if (next.pathname === "/auth/login/") {
+      throw new Error(
+        `login bounced back to the sign-in form (hop ${hop}). ` +
+          `Wrong credentials, or the account has MFA / a step this script can't do.`,
+      );
+    }
+    console.error(`• follow: ${next.pathname}${next.search}`);
+    res = await fetch(next.toString(), {
+      method: "GET",
+      redirect: "manual",
+      headers: { Cookie: cookieHeader(jar), Referer: `${BASE}/` },
+    });
+    absorb(jar, res);
+  }
+
+  // We should now hold something beyond the CSRF cookie (i.e. a session cookie).
+  const sessionCookies = Object.keys(jar).filter((k) => k !== "csrftoken");
+  if (sessionCookies.length === 0) {
     throw new Error(
-      `login did not succeed (status ${loginRes.status}, location "${location}"). ` +
-        `Wrong credentials, or the account has MFA / a step this script can't do.`,
+      `login completed the redirect chain but set no session cookie (last status ${res.status}). ` +
+        `The widget call would just 401; inspect the flow.`,
     );
   }
   saveJar(jar);
-  console.error(`• signed in; session cookies: ${Object.keys(jar).join(", ")}`);
+  console.error(`• signed in; cookies now: ${Object.keys(jar).join(", ")}`);
 }
 
 // ---- widget call ----------------------------------------------------------
@@ -172,7 +194,12 @@ async function callWidget(jar) {
 // returned 401/403, or answered 200 with the CSRF/failure sentinel.
 function looksUnauthenticated({ res, text }) {
   if (res.status === 401 || res.status === 403) return true;
-  if (res.status === 302 && /\/auth\/login/.test(res.headers.get("location") || "")) return true;
+  if (res.status >= 300 && res.status < 400) {
+    const loc = res.headers.get("location") || "";
+    // A redirect anywhere under /auth/ means the session is gone. (Match the
+    // path, not a bare "/auth/login" prefix — that also catches /auth/login-key.)
+    if (/\/auth\//.test(new URL(loc, BASE).pathname)) return true;
+  }
   if (res.status === 200) {
     try {
       const j = JSON.parse(text);

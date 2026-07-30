@@ -181,6 +181,62 @@ const COMMANDS = {
     }),
   },
 
+  // --- Raport: collections received ("incasari") ---------------------------
+  // The mirror of `receivables`: money IN. DataTables, 14 columns. Each row is
+  // a payment (type e.g. "Ordin plata") linked to the invoice(s) it settled
+  // (document_series_name + document_number), with date, value, currency, and
+  // an embedded status blob. Per-currency totals/subtotals. Filter: --from --to.
+  payments: {
+    path: "/raport/incasari/ajax/",
+    desc: "collections received (incasari): payments linked to the invoices they settled, with per-currency totals",
+    build: (f) => {
+      const body = {
+        sEcho: "1",
+        iColumns: "14",
+        sColumns: "",
+        iDisplayStart: f.start || "0",
+        iDisplayLength: f.length || "30",
+        sSearch: JSON.stringify({ from: f.from || "01/07/2026", to: f.to || "31/07/2026", currency: "0" }),
+        bRegex: "",
+        iSortingCols: "0",
+        last_documents_ids: "[]",
+      };
+      const notSortable = new Set([0, 4, 8, 9, 10, 11, 12, 13]); // verbatim from capture
+      for (let i = 0; i < 14; i++) {
+        body[`mDataProp_${i}`] = String(i);
+        body[`sSearch_${i}`] = "";
+        body[`bRegex_${i}`] = "false";
+        body[`bSearchable_${i}`] = "true";
+        body[`bSortable_${i}`] = notSortable.has(i) ? "false" : "true";
+      }
+      return body;
+    },
+  },
+
+  // --- Raport: product sales ("vanzari produse") ---------------------------
+  // Grouped by product: quantity, average price, value/total by currency, and
+  // a nested documentsList[] (each line: clientId, clientCif, document number,
+  // docType incl. "factura storno", signed quantities/values). Filter:
+  // --from --to, --document-type. Paginate: --page --length.
+  product_sales: {
+    path: "/raport/vanzari-produse/ajax/",
+    desc: "product-sales report: per-product totals by currency + nested per-document lines (with clientId)",
+    build: (f) => ({
+      sSearch: JSON.stringify({
+        reportType: 1,
+        from: f.from || "01/06/2026",
+        to: f.to || "30/06/2026",
+        currencyId: "-1",
+        doCurrencyConvertion: false,
+        documentType: f.documentType || "",
+        page: f.page ? Number(f.page) : 1,
+        results_per_page: f.length ? Number(f.length) : 10,
+        products_type: "0",
+        save_filter: true,
+      }),
+    }),
+  },
+
   // --- Client details lookup by name + CIF ---------------------------------
   // NOTE: plain form fields, NOT an sSearch JSON blob. Returns the full client
   // record: address, city/county/country, reg_com, email, iban/bank,

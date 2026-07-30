@@ -16,7 +16,7 @@ afterEach(async () => {
 
 async function connect(responses: StubResponse[], overrides: Partial<SmartBillConfig> = {}) {
   const { impl, calls } = stubFetch(responses);
-  const server = createServer(testConfig(overrides), impl);
+  const server = createServer(testConfig(overrides), { fetchImpl: impl });
   const client = new Client({ name: "test", version: "0.0.0" });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await Promise.all([client.connect(clientTransport), server.connect(serverTransport)]);

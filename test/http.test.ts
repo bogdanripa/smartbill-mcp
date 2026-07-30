@@ -237,10 +237,10 @@ describe("HTTP transport", () => {
     expect(response.headers.get("cache-control")).toBe("no-store");
     expect(response.headers.get("referrer-policy")).toBe("no-referrer");
 
-    // The three credentials, the series overrides, and where to find them.
-    for (const id of ["id=\"email\"", "id=\"token\"", "id=\"cif\""]) expect(html).toContain(id);
-    for (const id of ["invoiceSeries", "estimateSeries", "receiptSeries"]) expect(html).toContain(id);
-    expect(html).toContain("https://cloud.smartbill.ro/core/integrari/");
+    // The page collects the SmartBill login and posts it to the server, which
+    // signs in, reads the token/CIF, and hands back the connector URL.
+    for (const id of ["id=\"email\"", "id=\"password\""]) expect(html).toContain(id);
+    expect(html).toContain("/setup");
     expect(html).toContain("Add custom connector");
   });
 
@@ -252,19 +252,20 @@ describe("HTTP transport", () => {
     expect(html).toContain('MOUNT_PATH = "/smartbill"');
   });
 
-  it("keeps the setup page self-contained, so credentials cannot leak to a third party", async () => {
+  it("sends the credentials only to this server, never to a third party", async () => {
     const { base } = await listen();
 
     const html = await (await fetch(base, { headers: { Accept: "text/html" } })).text();
 
-    // Any external subresource could observe what the user types. Links are fine;
-    // src=, url() and fetch/XHR are not.
+    // The login is posted to our own /setup and nowhere else. External
+    // subresources (which could observe what the user types) are forbidden;
+    // same-origin, relative requests are the whole point of the page.
     expect(html).not.toMatch(/<(script|img|iframe)[^>]+src=/i);
     expect(html).not.toMatch(/<link[^>]+rel=["']?stylesheet/i);
     expect(html).not.toMatch(/\burl\(\s*["']?https?:/i);
-    expect(html).not.toMatch(/\b(fetch|XMLHttpRequest|WebSocket|navigator\.sendBeacon)\b/);
-    // No form that could POST the token anywhere.
-    expect(html).not.toMatch(/<form\b/i);
+    // The only network call is a relative POST to /setup — never an absolute URL.
+    expect(html).toMatch(/fetch\(\s*['"]\/setup['"]/);
+    expect(html).not.toMatch(/(fetch|XMLHttpRequest|WebSocket|sendBeacon)[^]{0,40}https?:\/\//i);
   });
 
   it("completes the MCP handshake with credentials in the URL", async () => {

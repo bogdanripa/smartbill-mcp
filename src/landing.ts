@@ -1,18 +1,12 @@
 import { SERVER_NAME, SERVER_VERSION } from "./server.js";
 
 /**
- * The encoder the setup page uses, kept as a standalone string so a test can
- * evaluate it and check it round-trips through decodeCredentials. If this and
- * the server's decoder ever disagree, every generated URL 401s.
+ * The setup page. The user enters their SmartBill email and password; the page
+ * POSTs them to /setup, where the server logs in, reads the scoped API token and
+ * CIF from the account, stores the tenant, and returns the connector URL. The
+ * password is sent over HTTPS and stored encrypted so the session can be renewed
+ * automatically — it is only ever used to talk to SmartBill.
  */
-export const CREDENTIAL_ENCODER_JS = `function encodeCredentials(email, token, cif) {
-  var raw = email + ':' + token + ':' + cif;
-  var utf8 = String.fromCharCode.apply(null, new TextEncoder().encode(raw));
-  return btoa(utf8).replace(/\\+/g, '-').replace(/\\//g, '_').replace(/=+$/, '');
-}`;
-
-const SMARTBILL_INTEGRATIONS_URL = "https://cloud.smartbill.ro/core/integrari/";
-
 export function renderLandingPage(mountPath: string): string {
   return `<!doctype html>
 <html lang="en">
@@ -20,7 +14,7 @@ export function renderLandingPage(mountPath: string): string {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>SmartBill MCP — connect your AI assistant to SmartBill</title>
-<meta name="description" content="Generate the connector URL that lets Claude or ChatGPT issue invoices, proformas and payments in your SmartBill Cloud account.">
+<meta name="description" content="Connect Claude or ChatGPT to your SmartBill Cloud account to issue invoices and read your receivables in plain language.">
 <style>
   :root {
     --bg: #f6f7f9; --panel: #ffffff; --fg: #16191d; --muted: #5b6470;
@@ -63,14 +57,13 @@ export function renderLandingPage(mountPath: string): string {
     font: inherit; font-size: .95rem;
   }
   input:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: transparent; }
-  .row { display: flex; gap: .75rem; flex-wrap: wrap; }
-  .row > div { flex: 1 1 8rem; }
   button {
     padding: .65rem 1.1rem; border: 0; border-radius: 8px;
     background: var(--accent); color: var(--accent-fg);
     font: inherit; font-weight: 600; cursor: pointer;
   }
   button:hover { filter: brightness(1.08); }
+  button:disabled { opacity: .6; cursor: default; }
   button.secondary { background: transparent; color: var(--accent); border: 1px solid var(--line); }
   code, .url {
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -90,8 +83,6 @@ export function renderLandingPage(mountPath: string): string {
   @media (prefers-color-scheme: dark) { .error { color: #ff8a80; } }
   #result[hidden] { display: none; }
   footer { margin-top: 3rem; color: var(--muted); font-size: .85rem; }
-  ol { padding-left: 1.25rem; }
-  ol li { margin-bottom: .5rem; }
 </style>
 </head>
 <body>
@@ -100,17 +91,17 @@ export function renderLandingPage(mountPath: string): string {
   <p class="lede">
     Connect Claude, ChatGPT or any other MCP client to your
     <a href="https://www.smartbill.ro/" target="_blank" rel="noopener noreferrer">SmartBill Cloud</a>
-    account, so you can issue and manage documents by asking for them in plain language.
+    account, so you can issue documents and read your books by asking in plain language.
   </p>
 
   <div class="panel">
     <p style="margin-bottom:.6rem"><strong>What your assistant will be able to do</strong></p>
     <ul>
-      <li>Issue invoices and proformas, turn an accepted proforma into an invoice, and send either by email</li>
-      <li>Record payments, and check how much of an invoice has actually been collected</li>
-      <li>Cancel, restore, delete or reverse (storno) a document</li>
-      <li>Read your VAT rates, document series and stock levels</li>
-      <li>Download any document as a PDF</li>
+      <li>Issue invoices and proformas, convert a proforma to an invoice, and email either</li>
+      <li>Record payments and check how much of an invoice has been collected</li>
+      <li>Cancel, restore, delete or reverse (storno) a document; download any document as a PDF</li>
+      <li>List your customers and read a client's statement, ledger and balance</li>
+      <li>See receivables with aging and status, collections received, and product sales</li>
     </ul>
     <p class="hint" style="font-size:.9rem">
       These act on your real books — an invoice issued here is a real fiscal document. Your assistant
@@ -118,61 +109,39 @@ export function renderLandingPage(mountPath: string): string {
     </p>
   </div>
 
-  <h2>Step 1 — get your SmartBill API credentials</h2>
-  <p>
-    Open <a href="${SMARTBILL_INTEGRATIONS_URL}" target="_blank" rel="noopener noreferrer">cloud.smartbill.ro/core/integrari</a>
-    (in SmartBill: <strong>Contul Meu → Integrari → API</strong>). That page shows the three values you need
-    — <strong>Email</strong>, <strong>Token</strong> and <strong>CIF</strong> — each with a copy button next to it.
-  </p>
-  <p class="hint" style="font-size:.9rem">
-    If the API section is missing, your plan may not include API access — SmartBill support can enable it.
-    Note that issuing documents through the API draws on your plan's monthly API document allowance.
-  </p>
-
-  <h2>Step 2 — paste them here</h2>
+  <h2>Connect your account</h2>
   <div class="panel">
-    <label for="email">Email <span class="hint">— the address you log into SmartBill with</span></label>
-    <input id="email" type="email" placeholder="you@company.ro" autocomplete="off" spellcheck="false">
+    <label for="email">SmartBill email <span class="hint">— the address you log in with</span></label>
+    <input id="email" type="email" placeholder="you@company.ro" autocomplete="username" spellcheck="false">
 
-    <label for="token">Token <span class="hint">— from the API section, e.g. 003|8efc…</span></label>
-    <input id="token" type="text" placeholder="003|xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" autocomplete="off" spellcheck="false">
-
-    <label for="cif">CIF <span class="hint">— your company's fiscal code</span></label>
-    <input id="cif" type="text" placeholder="RO12345678" autocomplete="off" spellcheck="false">
-
-    <label>Default series <span class="hint">— optional; leave blank to name a series on every request</span></label>
-    <div class="row">
-      <div><input id="invoiceSeries" type="text" placeholder="Invoice, e.g. FF" autocomplete="off" spellcheck="false"></div>
-      <div><input id="estimateSeries" type="text" placeholder="Proforma, e.g. PF" autocomplete="off" spellcheck="false"></div>
-      <div><input id="receiptSeries" type="text" placeholder="Receipt, e.g. CH" autocomplete="off" spellcheck="false"></div>
-    </div>
+    <label for="password">SmartBill password</label>
+    <input id="password" type="password" placeholder="••••••••" autocomplete="current-password">
 
     <p id="error" class="error" hidden></p>
-    <button id="generate" type="button">Generate my connector URL</button>
+    <button id="connect" type="button">Connect SmartBill</button>
   </div>
 
   <div class="warn">
-    <p><strong>Nothing you type here is sent anywhere.</strong> The URL is assembled entirely in your
-    browser — this page makes no network requests, and the server never receives what you paste.</p>
+    <p>Your email and password are sent over HTTPS to sign you in, and stored <strong>encrypted</strong>
+    so the connection keeps working when the session expires. They are used only to talk to SmartBill on
+    your behalf, and never shown back to you or logged.</p>
   </div>
 
   <div id="result" hidden>
-    <h2>Step 3 — add it to your assistant</h2>
+    <h2>Add it to your assistant</h2>
     <span id="url" class="url"></span>
     <p>
       <button id="copy" type="button">Copy URL</button>
-      <button id="reset" type="button" class="secondary">Clear</button>
+      <button id="reset" type="button" class="secondary">Start over</button>
     </p>
     <p><strong>In Claude:</strong> Settings → Connectors → <em>Add custom connector</em>. Give it a name,
     paste the URL into <em>Remote MCP server URL</em>, and leave the OAuth fields empty.</p>
-    <p>Then ask it something read-only first, like <em>"list my SmartBill VAT rates"</em> — that confirms
-    the credentials work without touching a single document.</p>
+    <p>Then ask something read-only first, like <em>"list my SmartBill customers"</em> — that confirms the
+    connection without touching a single document.</p>
 
     <div class="warn">
       <p><strong>Treat this URL like a password.</strong> It carries your API token, so anyone who has it
       can issue and delete documents on your account. Don't paste it into shared documents, tickets or chats.</p>
-      <p>To revoke it, regenerate your token on the SmartBill integrations page — that invalidates every URL
-      built from the old one.</p>
     </div>
   </div>
 
@@ -187,57 +156,56 @@ export function renderLandingPage(mountPath: string): string {
 
 <script>
 (function () {
-  ${CREDENTIAL_ENCODER_JS}
-
   var MOUNT_PATH = ${JSON.stringify(mountPath)};
-  var fields = ['email', 'token', 'cif', 'invoiceSeries', 'estimateSeries', 'receiptSeries'];
-  var el = {};
-  fields.forEach(function (id) { el[id] = document.getElementById(id); });
-
+  var emailEl = document.getElementById('email');
+  var passwordEl = document.getElementById('password');
   var errorEl = document.getElementById('error');
   var resultEl = document.getElementById('result');
   var urlEl = document.getElementById('url');
+  var connectBtn = document.getElementById('connect');
   var copyBtn = document.getElementById('copy');
 
-  function fail(message, focusId) {
+  function fail(message, focusEl) {
     errorEl.textContent = message;
     errorEl.hidden = false;
     resultEl.hidden = true;
-    if (focusId) el[focusId].focus();
+    if (focusEl) focusEl.focus();
   }
 
-  function build() {
-    var email = el.email.value.trim();
-    var token = el.token.value.trim();
-    var cif = el.cif.value.trim();
-
-    if (!email) return fail('Enter the email you log into SmartBill with.', 'email');
-    if (email.indexOf('@') < 1) return fail('That does not look like an email address.', 'email');
-    if (email.indexOf(':') !== -1) return fail('An email address cannot contain a colon.', 'email');
-    if (!token) return fail('Enter your SmartBill API token.', 'token');
-    if (!cif) return fail('Enter your company CIF, e.g. RO12345678.', 'cif');
-    if (cif.indexOf(':') !== -1) return fail('A CIF cannot contain a colon.', 'cif');
+  async function connect() {
+    var email = emailEl.value.trim();
+    var password = passwordEl.value;
+    if (!email || email.indexOf('@') < 1) return fail('Enter the email you log into SmartBill with.', emailEl);
+    if (!password) return fail('Enter your SmartBill password.', passwordEl);
 
     errorEl.hidden = true;
-
-    var url = location.origin + MOUNT_PATH + '/' + encodeCredentials(email, token, cif);
-    var params = [];
-    [['invoiceSeries', el.invoiceSeries], ['estimateSeries', el.estimateSeries],
-     ['receiptSeries', el.receiptSeries]].forEach(function (pair) {
-      var value = pair[1].value.trim();
-      if (value) params.push(pair[0] + '=' + encodeURIComponent(value));
-    });
-    if (params.length) url += '?' + params.join('&');
-
-    urlEl.textContent = url;
-    resultEl.hidden = false;
-    resultEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    connectBtn.disabled = true;
+    connectBtn.textContent = 'Connecting…';
+    try {
+      var resp = await fetch('/setup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: email, password: password })
+      });
+      var data = await resp.json().catch(function () { return {}; });
+      if (!resp.ok) {
+        return fail(data.message || 'Could not connect. Check your email and password and try again.', passwordEl);
+      }
+      urlEl.textContent = location.origin + data.url;
+      resultEl.hidden = false;
+      passwordEl.value = '';
+      resultEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    } catch (e) {
+      fail('Could not reach the server. Try again.');
+    } finally {
+      connectBtn.disabled = false;
+      connectBtn.textContent = 'Connect SmartBill';
+    }
   }
 
-  document.getElementById('generate').addEventListener('click', build);
-
+  connectBtn.addEventListener('click', connect);
   document.querySelector('main').addEventListener('keydown', function (event) {
-    if (event.key === 'Enter' && event.target.tagName === 'INPUT') { event.preventDefault(); build(); }
+    if (event.key === 'Enter' && event.target.tagName === 'INPUT') { event.preventDefault(); connect(); }
   });
 
   copyBtn.addEventListener('click', function () {
@@ -255,15 +223,14 @@ export function renderLandingPage(mountPath: string): string {
   });
 
   document.getElementById('reset').addEventListener('click', function () {
-    fields.forEach(function (id) { el[id].value = ''; });
+    emailEl.value = ''; passwordEl.value = '';
     urlEl.textContent = '';
     resultEl.hidden = true;
     errorEl.hidden = true;
-    el.email.focus();
+    emailEl.focus();
   });
 })();
 </script>
 </body>
-</html>
-`;
+</html>`;
 }

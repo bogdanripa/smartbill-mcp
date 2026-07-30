@@ -6,6 +6,8 @@ import { registerEstimateTools } from "./tools/estimates.js";
 import { registerInvoiceTools } from "./tools/invoices.js";
 import { registerPaymentTools } from "./tools/payments.js";
 import type { ToolContext } from "./tools/shared.js";
+import { registerPortalTools } from "./portal/tools.js";
+import type { PortalService } from "./portal/service.js";
 
 export const SERVER_NAME = "smartbill-mcp";
 export const SERVER_VERSION = "0.1.0";
@@ -21,7 +23,33 @@ export const SERVER_VERSION = "0.1.0";
  */
 export const BUILD_SHA = process.env.BUILD_SHA?.trim() || "dev";
 
-const INSTRUCTIONS = `Tools for SmartBill Cloud, the Romanian invoicing service. They act on one real
+/**
+ * The limitations paragraph depends on whether the portal report tools are
+ * present. Without them the public API genuinely cannot search or list; with
+ * them, those questions ARE answerable — so the instructions must not tell the
+ * model to give up.
+ */
+const LIMITS_PUBLIC_ONLY = `Documents can only be fetched by series and number. There is no search, no date
+range and no per-client lookup, and SmartBill exposes no customer list at all —
+clients are only ever written, as part of a document. So "all invoices for client
+ABC", "everything issued last month" and "list my customers" cannot be answered
+here. Say that plainly instead of guessing numbers or probing series one at a
+time; the account is rate limited and will start refusing requests. list_series,
+list_taxes and list_stocks are the only listings that exist.`;
+
+const LIMITS_WITH_PORTAL = `The public API tools below fetch a document only by series and number — they
+cannot search or list. But this server also has portal report tools that read
+the SmartBill web account and DO answer those questions: list_clients and
+get_client_details (the customer roster), get_client_statement and
+get_client_ledger (every document for one client over a date range, by CIF or
+name), list_receivables and list_client_balances (who owes what, with status and
+aging), list_payments (collections received) and list_product_sales. Use those
+for "all invoices for client ABC", "who owes me money", "list my customers",
+"what did we collect or sell". They return printed document numbers you can feed
+back into the public-API tools for payment status or the PDF.`;
+
+function buildInstructions(limits: string): string {
+  return `Tools for SmartBill Cloud, the Romanian invoicing service. They act on one real
 company's books: everything issued here is a live fiscal document, not a sandbox.
 
 Documents are identified by a series plus a number — series "FF", number "120",
@@ -56,13 +84,7 @@ different machine with no route to serve it back. "base64" returns bytes you
 cannot decode or reassemble into a document. When the user wants the file itself,
 send_document_email mails it from SmartBill, or point them at SmartBill Cloud.
 
-Documents can only be fetched by series and number. There is no search, no date
-range and no per-client lookup, and SmartBill exposes no customer list at all —
-clients are only ever written, as part of a document. So "all invoices for client
-ABC", "everything issued last month" and "list my customers" cannot be answered
-here. Say that plainly instead of guessing numbers or probing series one at a
-time; the account is rate limited and will start refusing requests. list_series,
-list_taxes and list_stocks are the only listings that exist.
+${limits}
 
 Three document kinds, easy to confuse:
 - invoice (factura) — the fiscal document. create_invoice.
@@ -83,11 +105,19 @@ usually wants). Deleting is irreversible.
 Confirm the client, the amounts and the VAT rate with the user before issuing a
 final document, emailing a customer, or deleting anything. Prefer isDraft: true
 while details are still unsettled — a draft can be edited or discarded.`;
+}
 
-export function createServer(config: SmartBillConfig, fetchImpl?: typeof fetch): McpServer {
+export interface CreateServerOptions {
+  fetchImpl?: typeof fetch;
+  /** When set, the session-based portal report tools are registered too. */
+  portal?: PortalService;
+}
+
+export function createServer(config: SmartBillConfig, options: CreateServerOptions = {}): McpServer {
+  const { fetchImpl, portal } = options;
   const server = new McpServer(
     { name: SERVER_NAME, version: SERVER_VERSION },
-    { instructions: INSTRUCTIONS },
+    { instructions: buildInstructions(portal ? LIMITS_WITH_PORTAL : LIMITS_PUBLIC_ONLY) },
   );
 
   const ctx: ToolContext = { client: new SmartBillClient(config, fetchImpl), config };
@@ -96,6 +126,8 @@ export function createServer(config: SmartBillConfig, fetchImpl?: typeof fetch):
   registerEstimateTools(server, ctx);
   registerPaymentTools(server, ctx);
   registerAccountTools(server, ctx);
+
+  if (portal) registerPortalTools(server, { service: portal, config });
 
   return server;
 }

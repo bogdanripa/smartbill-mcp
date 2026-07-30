@@ -1,8 +1,10 @@
 import { createServer as createHttpServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { buildConfig, type Credentials, type SmartBillConfig } from "./config.js";
-import { CredentialError, decodeBasicAuth, decodeCredentials } from "./credentials.js";
+import { CredentialError, decodeBasicAuth, decodeCredentials, encodeCredentials } from "./credentials.js";
 import { renderLandingPage } from "./landing.js";
+import type { PortalService } from "./portal/service.js";
+import { PortalAuthError } from "./portal/session.js";
 import { BUILD_SHA, createServer, SERVER_NAME, SERVER_VERSION } from "./server.js";
 
 export interface HttpOptions {
@@ -55,6 +57,7 @@ export function createHttpTransport(
   options: HttpOptions,
   env: NodeJS.ProcessEnv = process.env,
   fetchImpl?: typeof fetch,
+  portal?: PortalService,
 ): Server {
   return createHttpServer((req, res) => {
     void handle(req, res).catch((error: unknown) => {
@@ -69,6 +72,13 @@ export function createHttpTransport(
 
     if (url.pathname === "/health") {
       sendJson(res, 200, { status: "ok", version: SERVER_VERSION, commit: BUILD_SHA });
+      return;
+    }
+
+    // Onboarding: the setup page posts { email, password }; we log into SmartBill,
+    // scrape the scoped API token + CIF, store the tenant, and return the MCP URL.
+    if (url.pathname === "/setup" && req.method === "POST") {
+      await handleSetup(req, res, options.path, portal);
       return;
     }
 
@@ -107,7 +117,7 @@ export function createHttpTransport(
       return;
     }
 
-    const server = createServer(config, fetchImpl);
+    const server = createServer(config, { fetchImpl, portal });
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
       enableDnsRebindingProtection: options.allowedHosts.length > 0,
@@ -126,6 +136,63 @@ export function createHttpTransport(
 
 function isMcpPath(pathname: string, base: string): boolean {
   return pathname === base || pathname.startsWith(`${base}/`);
+}
+
+/** Reads a request body, capped so a huge POST can't exhaust memory. */
+async function readBody(req: IncomingMessage, limitBytes = 64 * 1024): Promise<string> {
+  const chunks: Buffer[] = [];
+  let total = 0;
+  for await (const chunk of req) {
+    const buf = chunk as Buffer;
+    total += buf.length;
+    if (total > limitBytes) throw new CredentialError("Request body too large.");
+    chunks.push(buf);
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
+
+/**
+ * Onboarding endpoint. Takes { email, password } as JSON, logs into SmartBill,
+ * stores the tenant, and returns { url } — the connector URL to paste into an
+ * MCP client. The password is used here and stored (encrypted) for auto-relogin;
+ * it is never logged.
+ */
+async function handleSetup(
+  req: IncomingMessage,
+  res: ServerResponse,
+  mountPath: string,
+  portal: PortalService | undefined,
+): Promise<void> {
+  if (!portal) {
+    sendJson(res, 503, { error: "setup_unavailable", message: "Portal onboarding is not configured on this server." });
+    return;
+  }
+
+  let email: string;
+  let password: string;
+  try {
+    const parsed = JSON.parse(await readBody(req)) as { email?: unknown; password?: unknown };
+    email = typeof parsed.email === "string" ? parsed.email.trim() : "";
+    password = typeof parsed.password === "string" ? parsed.password : "";
+    if (!email || !password) throw new Error("missing");
+  } catch {
+    sendJson(res, 400, { error: "bad_request", message: "Send JSON with a non-empty email and password." });
+    return;
+  }
+
+  try {
+    const { token, cif } = await portal.onboard(email, password);
+    const segment = encodeCredentials({ username: email, token, companyVatCode: cif });
+    sendJson(res, 200, { url: `${mountPath}/${segment}` });
+  } catch (error) {
+    if (error instanceof PortalAuthError) {
+      sendJson(res, 401, { error: "login_failed", message: error.message });
+      return;
+    }
+    // Never surface internals (or the password) — log a generic message.
+    console.error("smartbill-mcp setup failed:", error instanceof Error ? error.message : error);
+    sendJson(res, 502, { error: "setup_failed", message: "Could not complete SmartBill sign-in. Try again." });
+  }
 }
 
 /**

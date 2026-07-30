@@ -88,7 +88,7 @@ jobs:
           echo "GET / -> $CODE ($TYPE)"
           test "$CODE" = "200" || { echo "::error::root returned $CODE"; head -c 500 /tmp/page; exit 1; }
           grep -q "SmartBill MCP" /tmp/page || { echo "::error::setup page missing"; exit 1; }
-          grep -q "cloud.smartbill.ro/core/integrari" /tmp/page || { echo "::error::credentials link missing"; exit 1; }
+          grep -q 'id="password"' /tmp/page || { echo "::error::sign-in form missing"; exit 1; }
 
       - name: MCP endpoint answers a handshake
         run: |

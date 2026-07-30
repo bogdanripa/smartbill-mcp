@@ -4,6 +4,15 @@ An MCP server for the [SmartBill Cloud](https://www.smartbill.ro/) API. It lets 
 MCP client issue and manage Romanian invoices, proformas and payments, download
 document PDFs, and read VAT rates, series and stock levels.
 
+Run in hosted mode with a database, it also adds session-backed **reporting
+tools** the public API cannot provide — customer roster, receivables/aging,
+client statements and ledgers, collections and product sales (see
+[Portal report tools](#portal-report-tools)).
+
+> **Hosted instance:** a public deployment runs at
+> <https://smartbill-mcp-coolify.bogdanripa.com/>. Open it in a browser to
+> connect your own SmartBill account and generate a connector URL.
+
 It runs two ways:
 
 - **stdio**, single account, on your machine — credentials come from the environment.
@@ -63,11 +72,14 @@ npm run start:http     # or: node dist/index.js --http
 | --- | --- | --- |
 | `MCP_TRANSPORT` | — | Set to `http` instead of passing `--http`. |
 | `PORT` | `80` | Port to listen on. |
-| `HOST` | `0.0.0.0` | Interface to bind. |
+| `HOST` | `::` | Interface to bind (dual-stack; falls back to IPv4 if IPv6 is unavailable). |
 | `MCP_PATH` | `/mcp` | Base path the endpoint is mounted at. |
 | `MCP_ALLOWED_HOSTS` | — | Comma-separated `Host` values to accept (DNS rebinding protection). Unset accepts any. |
+| `DATABASE_URL` | — | Postgres connection string. Set with `SMARTBILL_SESSION_KEY` to enable the [portal report tools](#portal-report-tools) and the sign-in setup page. |
+| `SMARTBILL_SESSION_KEY` | — | 32-byte key as 64 hex chars, encrypts stored credentials at rest. Required alongside `DATABASE_URL`. |
 
-No `SMARTBILL_*` secrets are read in this mode — the server holds none.
+No per-account `SMARTBILL_*` secrets are read in this mode — each caller's
+credentials arrive with the request, and the server holds none.
 `GET /health` answers without credentials, for platform health checks:
 
 ```json
@@ -84,15 +96,23 @@ than racing it.
 ### The setup page
 
 Opening the deployment's root in a browser serves a self-service page that
-explains what the server does, points at
-[the SmartBill integrations page](https://cloud.smartbill.ro/core/integrari/) for
-the three values it needs, and generates the connector URL.
+explains what the server does, asks for the SmartBill **email and password**, and
+returns a ready-to-paste connector URL.
 
-The page is entirely self-contained — no external scripts, styles or fonts, no
-`fetch`, no `<form>`. The URL is assembled in the browser from what the user
-types, so the token never reaches the server until it is used for a real MCP
-call. `test/http.test.ts` asserts that, so a future edit can't quietly add a
-third-party subresource that could observe the field.
+Submitting the form POSTs the credentials to `/setup`. The server signs in to
+SmartBill, reads the account's scoped API token and CIF, stores the tenant — the
+password and session cookies encrypted at rest with `SMARTBILL_SESSION_KEY` (see
+[Portal report tools](#portal-report-tools)) — and responds with the connector
+URL. The password is only ever used to talk to SmartBill; it is never logged or
+sent back.
+
+The page loads no third-party scripts, styles or fonts and talks to nothing but
+this server's own `/setup`. `test/http.test.ts` asserts that, so a future edit
+can't quietly add an external subresource that could observe what the user types.
+
+The setup page and the portal flow require `DATABASE_URL` + `SMARTBILL_SESSION_KEY`.
+Without them the server runs public-API only: `/setup` answers `503` and callers
+supply their own token via the URL or a header (below).
 
 Non-browser callers (`Accept` without `text/html`) still get JSON at the root,
 so health checks and monitoring are unaffected.
@@ -194,6 +214,30 @@ docker run -p 8080:80 smartbill-mcp
 | `list_stocks` | Stock levels on a date, optionally per warehouse or product. |
 | `send_document_email` | Email an already-issued invoice or proforma. |
 
+### Portal report tools
+
+Registered only in hosted mode with `DATABASE_URL` + `SMARTBILL_SESSION_KEY` set.
+They read the SmartBill web account through an authenticated session to answer the
+questions the public API cannot — the customer roster and the reports behind
+SmartBill Cloud's dashboards. All read-only.
+
+| Tool | What it does |
+| --- | --- |
+| `list_clients` | Search / list customers (the nomenclator), by name substring. |
+| `get_client_details` | A customer's full record — address, CIF, IBAN, VAT-payer status. |
+| `list_receivables` | Unpaid invoices with status and days overdue, grouped by client. |
+| `list_client_balances` | Outstanding balance per client as of a date. |
+| `get_client_statement` | Every document issued to one client over a period. |
+| `get_client_ledger` | A client's ledger with a running balance. |
+| `list_payments` | Collections received over a period, linked to the invoices they settled. |
+| `list_product_sales` | Sales grouped by product over a period. |
+
+Onboarding (via the [setup page](#the-setup-page)) stores the account login
+encrypted with `SMARTBILL_SESSION_KEY`, so an expired session is renewed
+automatically. After three consecutive sign-in failures the account is frozen and
+the tools ask the user to re-enter their credentials on the setup page, which
+clears the block.
+
 ### How the tools are documented
 
 The descriptions are written for a model choosing between them, not just for a
@@ -222,10 +266,12 @@ turned into tool errors, so a failed call never looks like a success.
 **Rate limiting.** SmartBill allows 3 calls per second. The client serialises
 requests and spaces them out, so a burst of tool calls queues instead of failing.
 
-**PDFs.** Over stdio, `get_invoice_pdf` and `get_estimate_pdf` write the file to
-`SMARTBILL_DOWNLOAD_DIR` and return the path. Over HTTP the server has no
-filesystem the client can read, so they return base64 bytes instead. Either
-default can be overridden per call with `as: "file" | "base64"`.
+**PDFs.** Delivery is chosen with `as`. The default is `text` over HTTP (the
+extracted text layer — the only readable form of a document's fields) and `file`
+over stdio (writes to `SMARTBILL_DOWNLOAD_DIR`). To hand the actual file to the
+user, pass `as: "document"`: the PDF comes back as an MCP embedded resource the
+client can display or save. `as: "base64"` returns the raw bytes for a
+programmatic caller.
 
 **Email fields.** SmartBill expects the email subject and body base64-encoded.
 Pass plain text; the encoding is handled for you.
@@ -273,19 +319,22 @@ No endpoint returns an invoice's issue date, client or line items.
 of the structured data available about an issued document. Everything else exists
 only as rendered text inside the PDF.
 
-`get_invoice_pdf` and `get_estimate_pdf` therefore default to `as: "text"`, which
-extracts the text layer (via `unpdf`, no system dependency) and returns it. That
-is the only mode whose output a caller can actually inspect:
+`get_invoice_pdf` and `get_estimate_pdf` therefore default to `as: "text"` over
+HTTP, which extracts the text layer (via `unpdf`, no system dependency) and
+returns it — the only mode whose output a language model can inspect. The other
+modes:
 
+- `document` returns the PDF as an MCP embedded resource (a binary blob the
+  client receives, with `mimeType: application/pdf`). This is the way to deliver
+  the actual file to a user over HTTP.
 - `file` writes the PDF to `SMARTBILL_DOWNLOAD_DIR` on the machine running the
   server. Over HTTP that is a different machine, and nothing is served from that
-  directory — the file lands somewhere the caller cannot reach. Useful only for
-  stdio, where client and server share a filesystem.
-- `base64` returns the raw bytes. A programmatic caller can decode them; a
-  language model cannot, and cannot reassemble them into a file either.
+  directory, so it is useful only for stdio, where client and server share a
+  filesystem.
+- `base64` returns the raw bytes as a JSON string, for a programmatic caller.
 
-So neither is a way to deliver a document to a person. `send_document_email` has
-SmartBill mail it, which is.
+`send_document_email` is an alternative for delivery: it has SmartBill mail the
+document to the client.
 
 ### Amounts carry no currency
 
@@ -315,6 +364,11 @@ customers" are not answerable through this API. `/tax`, `/series` and `/stocks`
 are the only endpoints that return a list. The server instructions tell the model
 this, so it reports the limitation instead of probing series numbers one at a
 time — which would also hit SmartBill's request rate limit.
+
+In hosted mode with a database, the [portal report tools](#portal-report-tools)
+answer exactly these questions by reading the web account through an
+authenticated session; without that configuration the limitation stands, and the
+instructions adapt to whichever set of tools is registered.
 
 `create_invoice_from_estimate` sends `useEstimateDetails: true` with an
 `estimate` reference and no client block, letting SmartBill copy the client and

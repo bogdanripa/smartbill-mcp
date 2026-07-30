@@ -20,8 +20,18 @@ export async function createPortalService(
     return undefined;
   }
 
-  const store = new PostgresTenantStore(databaseUrl, keyFromHex(sessionKey));
-  await store.init();
-  console.error("smartbill-mcp: portal report tools enabled.");
-  return new PortalService(store, fetchImpl);
+  // A database hiccup must not take down the public-API tools too: if the store
+  // can't be reached or set up, log it and run public-only rather than crashing.
+  try {
+    const store = new PostgresTenantStore(databaseUrl, keyFromHex(sessionKey));
+    await store.init();
+    console.error("smartbill-mcp: portal report tools enabled.");
+    return new PortalService(store, fetchImpl);
+  } catch (error) {
+    console.error(
+      "smartbill-mcp: portal report tools disabled — could not initialise the tenant store:",
+      error instanceof Error ? error.message : error,
+    );
+    return undefined;
+  }
 }

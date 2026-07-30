@@ -85,10 +85,11 @@ export class PortalService {
     const endpoint = ENDPOINTS[endpointName];
     const cookies: PortalCookies = { ...tenant.cookies };
 
-    // First try with the stored session.
+    // First try with the stored session. A success also clears any lingering
+    // failure count — the breaker only cares about *consecutive* relogin failures.
     let response = await request(cookies, endpoint, params, this.fetchImpl);
     if (!isUnauthenticated(response)) {
-      await this.store.patch(email, { cookies });
+      await this.store.patch(email, { cookies, failCount: 0 });
       return parse(response.text);
     }
 

@@ -65,9 +65,10 @@ export function registerEstimateTools(server: McpServer, ctx: ToolContext): void
       description:
         "Read an already-issued proforma. Defaults to returning its TEXT, which is the only way to see the " +
         "proforma's date, client or line items — no SmartBill endpoint reports those. Read-only.\n\n" +
-        "The other `as` modes are not ways to hand a document to the user: 'file' writes to the server's own disk, " +
-        "unreachable over HTTP, and 'base64' returns bytes you cannot decode. To get the document to someone, use " +
-        "send_document_email.",
+        "Use this to read a proforma. To hand the user the actual PDF file, call with as: \"document\" — it returns the real PDF as an MCP " +
+        "embedded resource the client receives and can display, save or read. 'file' writes to the server's own " +
+        "disk (unreachable over HTTP) and 'base64' is for programmatic callers; send_document_email can also mail " +
+        "the document from SmartBill.",
       inputSchema: { ...estimateRefSchema, ...documentDeliverySchema },
       annotations: { title: "Read estimate PDF", readOnlyHint: true },
     },

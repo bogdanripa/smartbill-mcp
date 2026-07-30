@@ -349,6 +349,28 @@ describe("PDF download", () => {
     expect(payload.byteLength).toBe(4);
     expect(payload.path).toBeUndefined();
   });
+
+  it("returns the actual PDF as an MCP embedded resource in document mode", async () => {
+    const bytes = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d]); // %PDF-
+    const { client } = await connect([
+      { body: bytes, headers: { "content-type": "application/pdf" } },
+    ]);
+
+    const result = await client.callTool({
+      name: "get_invoice_pdf",
+      arguments: { number: "120", as: "document" },
+    });
+    const content = result.content as Array<{ type: string; text?: string; resource?: any }>;
+
+    // The receiving client gets a binary resource blob it can read/save, not JSON text.
+    const resource = content.find((part) => part.type === "resource")?.resource;
+    expect(resource).toBeDefined();
+    expect(resource.mimeType).toBe("application/pdf");
+    expect(resource.uri).toBe("smartbill://pdf/FF120.pdf");
+    expect(Buffer.from(resource.blob, "base64")).toEqual(Buffer.from(bytes));
+    // A companion text part names the file for text-only clients.
+    expect(content.some((part) => part.type === "text" && part.text?.includes("FF120.pdf"))).toBe(true);
+  });
 });
 
 describe("payments", () => {

@@ -44,17 +44,19 @@ export function resolveSeries(
 
 export const documentDeliverySchema = {
   as: z
-    .enum(["text", "file", "base64"])
+    .enum(["text", "file", "base64", "document"])
     .optional()
     .describe(
       "What to do with the PDF.\n" +
         "'text' extracts the document's text and returns it — use this to READ the document (issue date, client, " +
-        "line items, currency). This is the only mode whose result you can actually inspect.\n" +
+        "line items, currency). This is the only mode whose result you can inspect as plain text.\n" +
+        "'document' returns the actual PDF as an MCP embedded resource (a binary attachment the client receives " +
+        "and can display, save or read). This is the way to hand the real file to the user over HTTP.\n" +
         "'file' writes the PDF to a directory on the SERVER running this tool and returns that path. Over HTTP " +
         "the server is a different machine, so the path is unreachable for you and for the user — it is only " +
         "useful when the client shares a filesystem with the server.\n" +
-        "'base64' returns the raw bytes encoded. You cannot decode these or turn them back into a file for the " +
-        "user; do not offer base64 as a way to deliver a document. It exists for a programmatic caller.\n" +
+        "'base64' returns the raw bytes as a JSON string. It exists for a programmatic caller; prefer 'document' " +
+        "for delivering a file to the user.\n" +
         "Defaults to 'text' over HTTP.",
     ),
 };
@@ -78,7 +80,7 @@ export async function deliverPdf(
   binary: BinaryResponse,
   fallbackName: string,
   config: SmartBillConfig,
-  as?: "text" | "file" | "base64",
+  as?: "text" | "file" | "base64" | "document",
 ): Promise<ToolResult> {
   const filename = sanitiseFilename(binary.filename ?? fallbackName);
   const mode = as ?? config.defaultPdfDelivery;
@@ -92,6 +94,26 @@ export async function deliverPdf(
       pages,
       text,
     });
+  }
+
+  // The MCP-native way to hand over a binary: an embedded resource whose blob
+  // the client receives and can display, save or read. A short text part rides
+  // alongside so a client that only shows text still says what was returned.
+  if (mode === "document") {
+    const mimeType = binary.contentType.includes("pdf") ? binary.contentType : "application/pdf";
+    return {
+      content: [
+        { type: "text", text: `Attached the document as ${filename} (${binary.bytes.byteLength} bytes).` },
+        {
+          type: "resource",
+          resource: {
+            uri: `smartbill://pdf/${filename}`,
+            mimeType,
+            blob: Buffer.from(binary.bytes).toString("base64"),
+          },
+        },
+      ],
+    };
   }
 
   if (mode === "base64") {

@@ -78,11 +78,12 @@ gives amounts and a paid flag, and that is all. To answer "when was this issued?
 or "who was it for?", call get_invoice_pdf with as: "text", which returns the
 document's text. Do not conclude the information is unavailable.
 
-The other delivery modes are not ways to hand a file to anyone, and offering them
-wastes a turn. "file" writes to this server's own disk — over HTTP that is a
-different machine with no route to serve it back. "base64" returns bytes you
-cannot decode or reassemble into a document. When the user wants the file itself,
-send_document_email mails it from SmartBill, or point them at SmartBill Cloud.
+When the user wants the actual PDF file, call get_invoice_pdf (or get_estimate_pdf)
+with as: "document": it returns the real PDF as an MCP embedded resource the client
+receives and can display, save or read. "file" writes to this server's own disk —
+over HTTP that is a different machine with no route to serve it back — and "base64"
+is for a programmatic caller; neither hands the user a file. send_document_email can
+also mail the document from SmartBill.
 
 ${limits}
 

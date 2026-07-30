@@ -159,10 +159,10 @@ export function registerInvoiceTools(server: McpServer, ctx: ToolContext): void 
         "only inside the document. Read-only.\n\n" +
         "Use this whenever you need any detail beyond the amounts that get_invoice_payment_status returns, and to " +
         "establish an invoice's currency before quoting a figure.\n\n" +
-        "The other `as` modes are not ways to hand a document to the user. 'file' writes to the server's own disk, " +
-        "which over HTTP is a different machine with no route to serve it back. 'base64' returns bytes you cannot " +
-        "decode or reassemble — never offer it as a means of delivering a PDF. If the user wants the actual file, " +
-        "send_document_email mails it from SmartBill, or point them at SmartBill Cloud.",
+        "To hand the user the actual PDF file, call with as: \"document\" — it returns the real PDF as an MCP " +
+        "embedded resource the client receives and can display, save or read. 'file' writes to the server's own " +
+        "disk (unreachable over HTTP) and 'base64' is for programmatic callers; send_document_email can also mail " +
+        "the document from SmartBill.",
       inputSchema: { ...invoiceRefSchema, ...documentDeliverySchema },
       annotations: { title: "Read invoice PDF", readOnlyHint: true },
     },

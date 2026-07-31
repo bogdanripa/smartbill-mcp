@@ -1,13 +1,4 @@
-import { SERVER_NAME, SERVER_VERSION } from "./server.js";
-
-/**
- * The public homepage. With OAuth in front, there is no setup form here any
- * more: the user just adds the connector URL to their MCP client and signs in
- * through the authorization flow. So this is a marketing / overview page — what
- * the connector does and how to add it — not a setup guide.
- */
-export function renderHomePage(connectorUrl: string): string {
-  return `<!doctype html>
+<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -17,14 +8,14 @@ export function renderHomePage(connectorUrl: string): string {
 <style>
   :root {
     --bg:#f6f7f9; --panel:#ffffff; --fg:#16191d; --muted:#5b6470; --line:#e2e6ea;
-    --accent:#1f6feb; --accent-fg:#ffffff; --code-bg:#0f1620; --code-fg:#e6edf3;
-    --chip:#eef2f7; --warn-bg:#fff8e6; --warn-line:#f0d38a; --warn-fg:#6b4e00;
+    --accent:#1f6feb; --accent-fg:#ffffff;
+    --warn-bg:#fff8e6; --warn-line:#f0d38a; --warn-fg:#6b4e00;
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --bg:#0f1216; --panel:#171b21; --fg:#e8eaed; --muted:#9aa4b2; --line:#2a313a;
-      --accent:#4c8dff; --accent-fg:#06101f; --code-bg:#0b0f14; --code-fg:#e6edf3;
-      --chip:#1c222b; --warn-bg:#2a2313; --warn-line:#5c4a1a; --warn-fg:#f2d492;
+      --accent:#4c8dff; --accent-fg:#06101f;
+      --warn-bg:#2a2313; --warn-line:#5c4a1a; --warn-fg:#f2d492;
     }
   }
   * { box-sizing:border-box; }
@@ -82,7 +73,7 @@ export function renderHomePage(connectorUrl: string): string {
   <h2>Connect it in three steps</h2>
   <ol class="steps">
     <li><strong>Copy the connector URL.</strong>
-      <div class="url"><code id="url">${connectorUrl}</code><button id="copy" type="button">Copy</button></div>
+      <div class="url"><code id="url">…</code><button id="copy" type="button">Copy</button></div>
     </li>
     <li><strong>Add it to your assistant.</strong> In Claude: Settings → Connectors → <em>Add custom connector</em>,
       paste the URL, and save. (No token or OAuth fields to fill — leave them empty.)</li>
@@ -98,27 +89,28 @@ export function renderHomePage(connectorUrl: string): string {
   </div>
 
   <footer>
-    ${SERVER_NAME} v${SERVER_VERSION} ·
+    smartbill-mcp ·
     <a href="https://github.com/bogdanripa/smartbill-mcp" target="_blank" rel="noopener noreferrer">open source on GitHub</a>
     · self-hostable
   </footer>
 </main>
 <script>
 (function () {
-  var btn = document.getElementById('copy');
   var url = document.getElementById('url');
+  var btn = document.getElementById('copy');
+  // Host-agnostic: the connector URL is this origin's MCP endpoint.
+  var connector = location.origin + '/mcp';
+  url.textContent = connector;
   btn.addEventListener('click', function () {
-    var text = url.textContent;
     var done = function () { btn.textContent = 'Copied'; setTimeout(function () { btn.textContent = 'Copy'; }, 1500); };
-    if (navigator.clipboard) navigator.clipboard.writeText(text).then(done, done);
+    if (navigator.clipboard) navigator.clipboard.writeText(connector).then(done, done);
     else {
       var area = document.createElement('textarea');
-      area.value = text; document.body.appendChild(area); area.select();
+      area.value = connector; document.body.appendChild(area); area.select();
       document.execCommand('copy'); document.body.removeChild(area); done();
     }
   });
 })();
 </script>
 </body>
-</html>`;
-}
+</html>

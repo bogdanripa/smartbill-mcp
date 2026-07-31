@@ -144,12 +144,13 @@ pointing at the resource metadata — that is what kicks off the flow.
 
 ### The homepage
 
-Opening the deployment's root in a browser serves a marketing / overview page:
-what the connector does and the three steps to add it (copy the URL, add a
-custom connector, authorize with SmartBill). It is not a setup form — sign-in
-happens on `/authorize` during the OAuth flow. Non-browser callers (`Accept`
-without `text/html`) get JSON at the root instead, so health checks and
-monitoring are unaffected.
+The marketing / overview page (what the connector does and how to add it) is a
+**static site under `web/`**, served by the platform's CDN — the backend renders
+no HTML. It is not a setup form; sign-in happens on the server-rendered
+`/authorize` page during the OAuth flow. Direct hits to the backend container at
+`/` (before the frontend is published, or from a health check) get a small JSON
+status blob instead. The connector URL on the page is derived client-side from
+`location.origin`, so the same file works on any host.
 
 ### Deploying
 
@@ -160,6 +161,12 @@ listening on port 80, no secrets baked into the image:
 docker build --platform linux/arm64 -t smartbill-mcp .
 docker run -p 8080:80 smartbill-mcp
 ```
+
+The static homepage in `web/` is deployed separately from the container: the CI
+workflow zips it and uploads it to the platform's static host, which serves it
+at `/` in front of the backend. Paths the bundle doesn't contain — `/mcp`,
+`/authorize`, `/token`, `/.well-known/*`, `/health` — fall through to the
+container.
 
 ## Tools
 

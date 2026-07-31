@@ -15,6 +15,21 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # The marketing homepage is a static site served by the platform's CDN — no
+  # container, no cold start. Uploaded on every push; publishes in about a second.
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Package the static site
+        run: cd web && zip -qr ../site.zip .
+      - name: Upload the frontend
+        run: |
+          curl -fsS -X PUT \
+            -H "Authorization: Bearer ${{ secrets.PAAS_KEY }}" \
+            --data-binary @site.zip \
+            "https://api-coolify.bogdanripa.com/apps/smartbill-mcp/frontend"
+
   deploy:
     runs-on: ubuntu-latest
     permissions:
@@ -58,7 +73,7 @@ jobs:
   # container then came up. This does, and its log is the only window into the
   # running app for anyone who cannot reach the host directly.
   smoke:
-    needs: deploy
+    needs: [deploy, frontend]
     runs-on: ubuntu-latest
     steps:
       # Waiting for a 200 is not enough: during a redeploy the OUTGOING container

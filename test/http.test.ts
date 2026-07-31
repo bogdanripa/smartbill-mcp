@@ -212,22 +212,12 @@ describe("HTTP transport", () => {
     }
   });
 
-  it("answers the root with JSON for API clients", async () => {
+  it("answers the root with JSON — the homepage is a static frontend, not served from code", async () => {
     const { base } = await listen();
-    const response = await fetch(base);
+    // A browser Accept header no longer changes this: the backend renders no HTML.
+    const response = await fetch(base, { headers: { Accept: "text/html" } });
     expect(response.headers.get("content-type")).toContain("application/json");
     expect(await response.json()).toMatchObject({ name: "smartbill-mcp", status: "ok", authorization: "oauth2" });
-  });
-
-  it("answers the root with the marketing homepage for a browser", async () => {
-    const { base } = await listen();
-    const response = await fetch(base, { headers: { Accept: "text/html" } });
-    const html = await response.text();
-
-    expect(response.headers.get("content-type")).toContain("text/html");
-    expect(html).toContain("SmartBill MCP");
-    expect(html).toContain(`${base}/mcp`); // the connector URL is shown
-    expect(html).not.toContain('type="password"'); // no setup form on the homepage
   });
 
   it("404s a path that is not the MCP endpoint", async () => {

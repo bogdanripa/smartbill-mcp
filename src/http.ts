@@ -1,8 +1,7 @@
 import { createServer as createHttpServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { buildConfig, type SmartBillConfig } from "./config.js";
-import { sendHtml, sendJson } from "./http-helpers.js";
-import { renderHomePage } from "./landing.js";
+import { sendJson } from "./http-helpers.js";
 import { OAuthError } from "./oauth/provider.js";
 import { handleOAuthRequest } from "./oauth/routes.js";
 import type { HostedRuntime } from "./portal/setup.js";
@@ -87,22 +86,20 @@ export function createHttpTransport(
       return;
     }
 
-    // Browsers get the marketing homepage; everything else gets JSON.
+    // The homepage is served as a static frontend by the platform's CDN, so it
+    // never reaches the backend. This JSON is the fallback for direct hits to the
+    // container (and before the frontend is published) — the backend renders no HTML.
     if (url.pathname === "/") {
-      if (wantsHtml(req)) {
-        sendHtml(res, 200, renderHomePage(`${base}${options.path}`));
-      } else {
-        sendJson(res, 200, {
-          name: SERVER_NAME,
-          version: SERVER_VERSION,
-          commit: BUILD_SHA,
-          status: "ok",
-          transport: "streamable-http",
-          endpoint: options.path,
-          authorization: "oauth2",
-          documentation: "https://github.com/bogdanripa/smartbill-mcp#running-over-http-multi-tenant",
-        });
-      }
+      sendJson(res, 200, {
+        name: SERVER_NAME,
+        version: SERVER_VERSION,
+        commit: BUILD_SHA,
+        status: "ok",
+        transport: "streamable-http",
+        endpoint: options.path,
+        authorization: "oauth2",
+        documentation: "https://github.com/bogdanripa/smartbill-mcp#running-over-http-multi-tenant",
+      });
       return;
     }
 
@@ -221,10 +218,4 @@ function bind(server: Server, options: HttpOptions, host: string): Promise<void>
       resolve();
     });
   });
-}
-
-/** True when the caller is a browser rather than a health check or an API client. */
-function wantsHtml(req: IncomingMessage): boolean {
-  const accept = req.headers.accept;
-  return typeof accept === "string" && accept.includes("text/html");
 }

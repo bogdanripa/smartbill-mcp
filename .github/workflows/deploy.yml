@@ -45,11 +45,13 @@ jobs:
             ghcr.io/bogdanripa/smartbill-mcp:latest
             ghcr.io/bogdanripa/smartbill-mcp:${{ steps.tag.outputs.value }}
 
-      # No secret: the box watches :latest and redeploys the new image.
-      # This just asks it to do so now instead of at the next hourly poll.
+      # The box watches :latest and redeploys the new image; this asks it to do
+      # so now instead of at the next hourly poll. Authenticates with this app's
+      # scoped deploy key (PAAS_KEY), which can only redeploy this one app.
       - name: Trigger deploy on the Pi
         run: |
           curl -fsS -X POST \
+            -H "Authorization: Bearer ${{ secrets.PAAS_KEY }}" \
             "https://api-coolify.bogdanripa.com/apps/smartbill-mcp/refresh"
 
   # The deploy above only asks the Pi to pull; it says nothing about whether the

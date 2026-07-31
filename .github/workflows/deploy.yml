@@ -60,14 +60,32 @@ jobs:
             ghcr.io/bogdanripa/smartbill-mcp:latest
             ghcr.io/bogdanripa/smartbill-mcp:${{ steps.tag.outputs.value }}
 
-      # The box watches :latest and redeploys the new image; this asks it to do
-      # so now instead of at the next hourly poll. Authenticates with this app's
-      # scoped deploy key (PAAS_KEY), which can only redeploy this one app.
+      # Tells the box what this build pushed — the convention now, and what
+      # creates the container on an app's first deploy. After that the box
+      # watches the tag itself and this just asks it to check now. Authenticated
+      # with this app's scoped deploy key (PAAS_KEY). A 2xx means the new
+      # container came up healthy (the platform verifies before answering), so a
+      # rolled-back deploy fails here. The control plane answers 404 while it
+      # restarts, so transient codes are retried rather than believed.
       - name: Trigger deploy on the Pi
         run: |
-          curl -fsS -X POST \
-            -H "Authorization: Bearer ${{ secrets.PAAS_KEY }}" \
-            "https://api-coolify.bogdanripa.com/apps/smartbill-mcp/refresh"
+          for i in $(seq 1 10); do
+            code=$(curl -sS -o /tmp/out -w '%{http_code}' -X POST \
+              -H "Authorization: Bearer ${{ secrets.PAAS_KEY }}" \
+              -H "Content-Type: application/json" \
+              -d '{"image": "ghcr.io/bogdanripa/smartbill-mcp:latest"}' \
+              "https://api-coolify.bogdanripa.com/apps/smartbill-mcp/refresh" || echo 000)
+            case "$code" in
+              2*) cat /tmp/out; echo; exit 0 ;;
+              404|000|503|504) echo "attempt $i: $code, retrying"; sleep 10 ;;
+              401) echo "PAAS_KEY is not this app's deploy key"; exit 1 ;;
+              502) cat /tmp/out; echo
+                   echo "deploy rolled back — the new container never became healthy"
+                   echo "check: apps_logs smartbill-mcp"; exit 1 ;;
+              *)  cat /tmp/out; echo; echo "refresh failed ($code)"; exit 1 ;;
+            esac
+          done
+          echo "gave up after 10 attempts"; exit 1
 
   # The deploy above only asks the Pi to pull; it says nothing about whether the
   # container then came up. This does, and its log is the only window into the
@@ -104,6 +122,12 @@ jobs:
           TYPE=$(curl -s -o /dev/null -w '%{content_type}' -H 'Accept: text/html' --max-time 15 "$URL/")
           echo "GET / -> $CODE ($TYPE)"
           test "$CODE" = "200" || { echo "::error::root returned $CODE"; head -c 500 /tmp/page; exit 1; }
+          # The homepage must come from the static host. If the backend answered
+          # (application/json), the frontend upload did not take effect.
+          case "$TYPE" in
+            text/html*) ;;
+            *) echo "::error::/ served $TYPE, not static HTML — the homepage came from the backend, not the static host"; exit 1 ;;
+          esac
           grep -q "SmartBill MCP" /tmp/page || { echo "::error::homepage missing"; exit 1; }
           grep -q "Add custom connector" /tmp/page || { echo "::error::connect instructions missing"; exit 1; }
 
@@ -114,9 +138,19 @@ jobs:
           echo "GET /.well-known/oauth-authorization-server -> $CODE"; head -c 300 /tmp/asm; echo
           test "$CODE" = "200" || { echo "::error::AS metadata returned $CODE"; exit 1; }
           grep -q '"authorization_endpoint"' /tmp/asm || { echo "::error::no authorization_endpoint"; exit 1; }
+          # The endpoints MUST be the public host. Valid metadata that points at
+          # an internal hostname passes discovery but is unusable by a real
+          # client — this is the check that catches that.
+          grep -q 'smartbill-mcp-coolify.bogdanripa.com/authorize' /tmp/asm \
+            || { echo "::error::authorization_endpoint is not the public host"; cat /tmp/asm; exit 1; }
+          if grep -Eqi 'internal|localhost|127\.0\.0\.1|\.svc' /tmp/asm; then
+            echo "::error::AS metadata points at an internal host"; cat /tmp/asm; exit 1
+          fi
           RS=$(curl -s -o /tmp/rsm -w '%{http_code}' --max-time 15 "$URL/.well-known/oauth-protected-resource")
           echo "GET /.well-known/oauth-protected-resource -> $RS"; head -c 300 /tmp/rsm; echo
           test "$RS" = "200" || { echo "::error::PRM returned $RS"; exit 1; }
+          grep -q 'smartbill-mcp-coolify.bogdanripa.com/mcp' /tmp/rsm \
+            || { echo "::error::PRM resource is not the public host"; cat /tmp/rsm; exit 1; }
 
       - name: Unauthenticated MCP request is challenged
         run: |
@@ -126,4 +160,7 @@ jobs:
             -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}')
           echo "POST /mcp with no token -> $CODE"
           test "$CODE" = "401" || { echo "::error::expected 401, got $CODE"; exit 1; }
-          grep -iq 'www-authenticate' /tmp/hdr || { echo "::error::missing WWW-Authenticate challenge"; exit 1; }
+          # The challenge must point the client at the PUBLIC resource metadata —
+          # a bare presence check passes even when it points somewhere unreachable.
+          grep -iq 'www-authenticate:.*resource_metadata="https://smartbill-mcp-coolify.bogdanripa.com/' /tmp/hdr \
+            || { echo "::error::WWW-Authenticate does not point at the public resource metadata"; cat /tmp/hdr; exit 1; }

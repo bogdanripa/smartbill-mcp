@@ -38,6 +38,7 @@ EXPOSE 80
 # does not cut over before the new one can serve. Matches the platform's
 # documented example rather than diverging from it.
 HEALTHCHECK --interval=10s --timeout=3s --start-period=15s \
+  --start-interval=250ms \
   CMD curl -fsS http://localhost:80/health || exit 1
 
 # HTTP mode is multi-tenant: credentials arrive with each request, so no

@@ -51,6 +51,23 @@ describe("portal endpoint builders", () => {
     expect(search.periodStartDate).toBe("01/07/2026");
   });
 
+  it("pages the receivables report inside sSearch, never via DataTables keys", () => {
+    // Omitting a page size makes SmartBill serve 10 clients silently, and the
+    // DataTables/top-level spellings are ignored by this endpoint — so the keys
+    // have to be these, in here.
+    const body = ENDPOINTS.receivables.build!({ from: "01/07/2026", to: "31/07/2026" });
+    const search = JSON.parse(body.sSearch) as Record<string, unknown>;
+    expect(search.results_per_page).toBe(200);
+    expect(search.page).toBe(1);
+    expect(body.iDisplayLength).toBeUndefined();
+    expect(body.results_per_page).toBeUndefined();
+
+    const paged = ENDPOINTS.receivables.build!({ length: 50, page: 3 });
+    const pagedSearch = JSON.parse(paged.sSearch) as Record<string, unknown>;
+    expect(pagedSearch.results_per_page).toBe(50);
+    expect(pagedSearch.page).toBe(3);
+  });
+
   it("sends the statement keyed by CIF with an empty client_id", () => {
     const body = ENDPOINTS.statement.build!({ cif: "38909947" });
     const search = JSON.parse(body.sSearch) as Record<string, unknown>;

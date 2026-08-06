@@ -221,7 +221,7 @@ SmartBill Cloud's dashboards. All read-only.
 | --- | --- |
 | `list_clients` | Search / list customers (the nomenclator), by name substring. |
 | `get_client_details` | A customer's full record — address, CIF, IBAN, VAT-payer status. |
-| `list_receivables` | Unpaid invoices with status and days overdue, grouped by client. |
+| `list_receivables` | Unpaid invoices with status and days overdue, grouped by client. Paged internally, so every client is returned. |
 | `list_client_balances` | Outstanding balance per client as of a date. |
 | `get_client_statement` | Every document issued to one client over a period. |
 | `get_client_ledger` | A client's ledger with a running balance. |

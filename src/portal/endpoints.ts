@@ -74,6 +74,14 @@ export const ENDPOINTS = {
   },
 
   // Aging / receivables: status + days overdue per invoice, grouped by client.
+  //
+  // Paged by `results_per_page` + 1-based `page`, both INSIDE the sSearch JSON.
+  // Probed against the live portal: the DataTables keys (iDisplayStart /
+  // iDisplayLength, with or without column scaffolding) and top-level
+  // results_per_page / start / length are all ignored here, and page 1 + page 2
+  // reconstruct the full ordered set with no overlap. Send no page size at all
+  // and SmartBill quietly serves 10 clients while clientsCount still reports the
+  // true total — a short list that looks complete.
   receivables: {
     path: "/raport/facturi-neincasate/ajax/",
     method: "POST",
@@ -83,6 +91,8 @@ export const ENDPOINTS = {
       return {
         sSearch: JSON.stringify({
           reportType: 1,
+          results_per_page: p.length !== undefined ? Number(p.length) : 200,
+          page: p.page !== undefined ? Number(p.page) : 1,
           displayPayments: true,
           periodFilter: 0,
           periodStartDate: from,

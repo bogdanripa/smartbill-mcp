@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { PortalNeedsManualError, PortalService } from "../src/portal/service.js";
+import { mergeReceivablePages } from "../src/portal/tools.js";
 import { PortalAuthError } from "../src/portal/session.js";
 import { InMemoryTenantStore } from "../src/store/tenants.js";
 
@@ -160,5 +161,67 @@ describe("PortalService", () => {
     const tenant = await store.get(EMAIL);
     expect(tenant?.failCount).toBe(0);
     expect(tenant?.needsManual).toBe(false);
+  });
+});
+
+describe("receivables pagination", () => {
+  /** Pages of `size` client rows each, totalling `total`, labelled by index. */
+  const pager = (total: number, calls: number[] = []) =>
+    (page: number, size: number) => {
+      calls.push(page);
+      const start = (page - 1) * size;
+      return Promise.resolve({
+        clientsCount: total,
+        currencies: ["RON"],
+        clients: Array.from({ length: Math.max(0, Math.min(size, total - start)) }, (_, i) => ({
+          info: { id: start + i },
+        })),
+      });
+    };
+
+  it("walks every page and merges them into one payload", async () => {
+    const calls: number[] = [];
+    const merged = await mergeReceivablePages(pager(16, calls), 10);
+    expect(calls).toEqual([1, 2]);
+    expect(merged.clients).toHaveLength(16);
+    expect((merged.clients as Array<{ info: { id: number } }>).map((c) => c.info.id)).toEqual(
+      Array.from({ length: 16 }, (_, i) => i),
+    );
+    // Top-level fields come from the first page and survive the merge.
+    expect(merged.clientsCount).toBe(16);
+    expect(merged.currencies).toEqual(["RON"]);
+    expect(merged.truncated).toBeUndefined();
+  });
+
+  it("stops on a short page without asking for one more", async () => {
+    const calls: number[] = [];
+    const merged = await mergeReceivablePages(pager(7, calls), 10);
+    expect(calls).toEqual([1]);
+    expect(merged.clients).toHaveLength(7);
+  });
+
+  it("keeps going when the row count runs past clientsCount", async () => {
+    // A client billed in two currencies gets a row per currency, so rows can
+    // exceed clientsCount. Stopping at clientsCount would drop the tail.
+    const calls: number[] = [];
+    const fetchPage = (page: number, size: number) => {
+      calls.push(page);
+      const rows = page === 1 ? size : 3;
+      return Promise.resolve({
+        clientsCount: 5, // deliberately lower than the rows returned
+        clients: Array.from({ length: rows }, (_, i) => ({ info: { id: (page - 1) * size + i } })),
+      });
+    };
+    const merged = await mergeReceivablePages(fetchPage, 10);
+    expect(calls).toEqual([1, 2]);
+    expect(merged.clients).toHaveLength(13);
+  });
+
+  it("flags truncation instead of silently returning a short list", async () => {
+    // Every page comes back full, so the walk hits its ceiling with more to go.
+    const merged = await mergeReceivablePages(pager(1000), 10, 3);
+    expect(merged.clients).toHaveLength(30);
+    expect(merged.truncated).toBe(true);
+    expect(merged.truncationNote).toMatch(/narrow the report/i);
   });
 });

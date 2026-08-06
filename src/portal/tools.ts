@@ -26,19 +26,74 @@ export interface PortalToolContext {
   config: SmartBillConfig;
 }
 
+/** Clients per receivables request, and the ceiling on how many pages we walk. */
+const RECEIVABLES_PAGE_SIZE = 200;
+const RECEIVABLES_MAX_PAGES = 25;
+
+interface ReceivablesPage {
+  clients?: unknown[];
+  clientsCount?: number;
+  [key: string]: unknown;
+}
+
+/**
+ * Walks every page of the receivables report and merges them into one payload.
+ *
+ * Exported for tests. `fetchPage` is 1-based, matching the portal.
+ *
+ * The stop condition is a short page, deliberately not `clientsCount`: on an
+ * account where a client holds invoices in two currencies the report emits one
+ * row per client *and currency*, so the row count legitimately runs ahead of
+ * clientsCount (68 rows against a count of 59 on one of the accounts probed).
+ * Treating that number as the expected length would end the walk early on some
+ * accounts and loop forever on others.
+ */
+export async function mergeReceivablePages(
+  fetchPage: (page: number, pageSize: number) => Promise<ReceivablesPage>,
+  pageSize: number = RECEIVABLES_PAGE_SIZE,
+  maxPages: number = RECEIVABLES_MAX_PAGES,
+): Promise<ReceivablesPage> {
+  let first: ReceivablesPage | undefined;
+  const clients: unknown[] = [];
+  let page = 1;
+
+  for (; page <= maxPages; page++) {
+    const data = await fetchPage(page, pageSize);
+    first ??= data;
+    const batch = Array.isArray(data.clients) ? data.clients : [];
+    clients.push(...batch);
+    if (batch.length < pageSize) break; // a short page is the last page
+  }
+
+  const merged: ReceivablesPage = { ...(first ?? {}), clients };
+  if (page > maxPages) {
+    // Never return a short list that reads as the whole report.
+    merged.truncated = true;
+    merged.truncationNote =
+      `Stopped after ${maxPages} pages of ${pageSize} clients. Narrow the report with ` +
+      `from/to or clientName to see the rest.`;
+  }
+  return merged;
+}
+
 export function registerPortalTools(server: McpServer, { service, config }: PortalToolContext): void {
-  const run = async (endpoint: PortalEndpointName, params: PortalParams): Promise<ToolResult> => {
+  const call = (endpoint: PortalEndpointName, params: PortalParams): Promise<unknown> =>
+    service.call(config.username, config.token, config.companyVatCode, endpoint, params);
+
+  /** Shapes portal auth failures into a clean, actionable result instead of a stack trace. */
+  const guard = async (produce: () => Promise<unknown>): Promise<ToolResult> => {
     try {
-      const data = await service.call(config.username, config.token, config.companyVatCode, endpoint, params);
-      return jsonResult(data);
+      return jsonResult(await produce());
     } catch (error) {
       if (error instanceof PortalNeedsManualError || error instanceof PortalAuthError) {
-        // Surface a clean, actionable message instead of a stack trace.
         return jsonResult({ error: error.message, action: "Re-enter your SmartBill email and password on the setup page." });
       }
       throw error;
     }
   };
+
+  const run = (endpoint: PortalEndpointName, params: PortalParams): Promise<ToolResult> =>
+    guard(() => call(endpoint, params));
 
   server.registerTool(
     "list_clients",
@@ -89,7 +144,11 @@ export function registerPortalTools(server: McpServer, { service, config }: Port
         "('in termen' = within term, 'termen depasit' = overdue), days past due, series+number, value and " +
         "currency, plus per-client and per-currency totals. Read-only.\n\n" +
         "This is how to answer 'who owes me money?', 'what is overdue?' and 'how much is outstanding?' — none of " +
-        "which the public API can do. Narrow with a date window or a client name if needed.",
+        "which the public API can do. Narrow with a date window or a client name if needed.\n\n" +
+        "Every client is returned: the report is paged internally and the pages are merged, so there is no need " +
+        "to re-query client by client. `clientsCount` counts distinct clients and can differ from the length of " +
+        "`clients` (a client billed in two currencies gets a row per currency) — it is not a completeness check. " +
+        "If the report is ever cut short, the result says so in `truncated`.",
       inputSchema: {
         from: isoDate.optional().describe("Start of the issue-date window (YYYY-MM-DD). Defaults to Jan 1 this year."),
         to: isoDate.optional().describe("End of the window (YYYY-MM-DD). Defaults to today."),
@@ -98,7 +157,17 @@ export function registerPortalTools(server: McpServer, { service, config }: Port
       annotations: { title: "List receivables", readOnlyHint: true },
     },
     (args) =>
-      run("receivables", { from: isoToDdmmyyyy(args.from), to: isoToDdmmyyyy(args.to), client: args.clientName }),
+      guard(() =>
+        mergeReceivablePages((page, length) =>
+          call("receivables", {
+            from: isoToDdmmyyyy(args.from),
+            to: isoToDdmmyyyy(args.to),
+            client: args.clientName,
+            length,
+            page,
+          }) as Promise<ReceivablesPage>,
+        ),
+      ),
   );
 
   server.registerTool(

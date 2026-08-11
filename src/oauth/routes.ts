@@ -24,6 +24,36 @@ export interface OAuthContext {
   mcpPath: string;
 }
 
+/**
+ * What to tell someone whose sign-in failed, per stage.
+ *
+ * Four of the five stages are sign-ins that *succeeded*. Reporting all of them
+ * as a rejected password is how a colleague ends up retyping a correct password
+ * three times against a permissions problem, so each stage says what actually
+ * went wrong and what to do about it.
+ */
+export function authFailureMessage(error: PortalAuthError): string {
+  switch (error.stage) {
+    case "credentials":
+      return "SmartBill did not accept that email and password. Please try again.";
+    case "no-api-token":
+      return "Signed in to SmartBill, but this user has no API token. Open " +
+        "cloud.smartbill.ro/core/integrari/ — if it shows no token, ask whoever " +
+        "administers the account to enable API access for this user, or use an " +
+        "account that already has it.";
+    case "integrations":
+      return "Signed in to SmartBill, but its integrations page did not load, so " +
+        "the API token could not be read. This is usually temporary — try again " +
+        "in a few minutes.";
+    case "no-session":
+      return "SmartBill accepted the sign-in but returned no session. This is a " +
+        "problem on their side rather than with the password — try again shortly.";
+    case "login-page":
+      return "The SmartBill login page could not be read, so the sign-in was never " +
+        "attempted. Nothing is wrong with the password; this needs looking at.";
+  }
+}
+
 function authorizationServerMetadata(base: string) {
   return {
     issuer: base,
@@ -136,7 +166,13 @@ export async function handleOAuthRequest(
       res.end();
     } catch (error) {
       if (error instanceof PortalAuthError) {
-        // Bad SmartBill credentials — keep the user on the form to retry.
+        // Only "credentials" is a wrong password. Saying so for the others sent
+        // people back to re-type a password that was never the problem, and left
+        // nothing on the box to diagnose it with — hence the log line too.
+        console.error(
+          `smartbill-mcp: authorize failed for ${email || "(no email)"} ` +
+          `at stage=${error.stage}: ${error.message}`,
+        );
         const client = await provider.validateAuthorizeRequest(request).catch(() => undefined);
         sendHtml(
           res,
@@ -144,7 +180,7 @@ export async function handleOAuthRequest(
           renderAuthorizePage({
             params: formParams(form),
             clientName: client?.clientName,
-            error: "SmartBill did not accept that email and password. Please try again.",
+            error: authFailureMessage(error),
           }),
         );
         return true;

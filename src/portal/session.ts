@@ -13,8 +13,31 @@ export const PORTAL_BASE_URL = "https://cloud.smartbill.ro";
 export type PortalCookies = Record<string, string>;
 
 /** Login failed for a reason retrying won't fix (bad credentials, or an MFA/step-up). */
+/**
+ * Which step of the portal sign-in failed.
+ *
+ * Only `credentials` means the password was wrong. The others are sign-ins that
+ * *worked* and then hit something else, and telling someone their password was
+ * rejected when it was not sends them to re-type it for ever — which is exactly
+ * what happened before this existed.
+ */
+export type PortalAuthStage =
+  /** The login form could not be read — SmartBill changed the page, or blocked us. */
+  | "login-page"
+  /** SmartBill bounced the sign-in back to the login form. The real bad-password case. */
+  | "credentials"
+  /** Signed in, but no session cookie came back. */
+  | "no-session"
+  /** Signed in, but the integrations page did not load. */
+  | "integrations"
+  /** Signed in, but that page carries no API token/CIF — usually a role without API access. */
+  | "no-api-token";
+
 export class PortalAuthError extends Error {
-  constructor(message: string) {
+  constructor(
+    message: string,
+    readonly stage: PortalAuthStage = "credentials",
+  ) {
     super(message);
     this.name = "PortalAuthError";
   }
@@ -67,7 +90,8 @@ export async function login(email: string, password: string, fetchImpl: typeof f
   const html = await pageRes.text();
   const tokenMatch = html.match(/name="csrfmiddlewaretoken"\s+value="([^"]+)"/);
   if (!tokenMatch) {
-    throw new PortalAuthError("Could not find the CSRF token on the SmartBill login page.");
+    throw new PortalAuthError(
+      "Could not find the CSRF token on the SmartBill login page.", "login-page");
   }
 
   let res = await fetchImpl(`${PORTAL_BASE_URL}/auth/login/?next=/`, {
@@ -95,6 +119,7 @@ export async function login(email: string, password: string, fetchImpl: typeof f
     if (next.pathname === "/auth/login/") {
       throw new PortalAuthError(
         "SmartBill rejected the sign-in (wrong email/password, or the account needs a step this cannot perform).",
+        "credentials",
       );
     }
     res = await fetchImpl(next.toString(), {
@@ -107,7 +132,8 @@ export async function login(email: string, password: string, fetchImpl: typeof f
 
   const hasSession = Object.keys(jar).some((name) => name !== "csrftoken");
   if (!hasSession) {
-    throw new PortalAuthError("Sign-in completed but SmartBill set no session cookie.");
+    throw new PortalAuthError(
+      "Sign-in completed but SmartBill set no session cookie.", "no-session");
   }
   return jar;
 }
@@ -119,7 +145,8 @@ export async function scrapeApiCredentials(
 ): Promise<ScrapedApiCredentials> {
   const { status, text } = await request(jar, ENDPOINTS.integrations, {}, fetchImpl);
   if (status !== 200) {
-    throw new PortalAuthError(`Integrations page returned HTTP ${status}; cannot read the API token.`);
+    throw new PortalAuthError(
+      `Integrations page returned HTTP ${status}; cannot read the API token.`, "integrations");
   }
   const pick = (re: RegExp): string | null => {
     const m = text.match(re);

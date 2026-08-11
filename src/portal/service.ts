@@ -46,6 +46,7 @@ export class PortalService {
     if (!creds.token || !creds.cif) {
       throw new PortalAuthError(
         "Signed in, but could not read the API token/CIF from the SmartBill integrations page.",
+        "no-api-token",
       );
     }
     await this.store.upsert({ email, token: creds.token, cif: creds.cif, password, cookies });

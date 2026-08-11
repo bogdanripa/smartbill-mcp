@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { ENDPOINTS } from "../src/portal/endpoints.js";
+import { authFailureMessage } from "../src/oauth/routes.js";
 import {
   cookieHeader,
   isUnauthenticated,
   login,
   PortalAuthError,
+  type PortalAuthStage,
   request,
   scrapeApiCredentials,
   type PortalCookies,
@@ -111,6 +113,34 @@ describe("portal login", () => {
     ]);
     await expect(login("me@example.com", "bad", fetchImpl)).rejects.toBeInstanceOf(PortalAuthError);
   });
+
+  // The stage is what decides whether someone is told their password was wrong,
+  // so each failure has to carry the right one. Only a bounce back to the login
+  // form is a bad password; the rest are sign-ins that got further than that.
+  it("tags a bounce back to the login form as a credentials failure", async () => {
+    const fetchImpl = scriptedFetch([
+      () => res(200, { body: '<input name="csrfmiddlewaretoken" value="MW">', setCookie: ["csrftoken=c; Path=/"] }),
+      () => res(302, { location: "/auth/login/?next=/" }),
+    ]);
+    await expect(login("me@example.com", "bad", fetchImpl))
+      .rejects.toMatchObject({ stage: "credentials" });
+  });
+
+  it("tags an unreadable login page as login-page, not a bad password", async () => {
+    // No csrfmiddlewaretoken: SmartBill changed the form, or served a block page.
+    const fetchImpl = scriptedFetch([() => res(200, { body: "<html>maintenance</html>" })]);
+    await expect(login("me@example.com", "pw", fetchImpl))
+      .rejects.toMatchObject({ stage: "login-page" });
+  });
+
+  it("tags a sign-in that sets no session cookie as no-session", async () => {
+    const fetchImpl = scriptedFetch([
+      () => res(200, { body: '<input name="csrfmiddlewaretoken" value="MW">' }),
+      () => res(200, { body: "<html>ok</html>" }), // no redirect, no session cookie
+    ]);
+    await expect(login("me@example.com", "pw", fetchImpl))
+      .rejects.toMatchObject({ stage: "no-session" });
+  });
 });
 
 describe("scrapeApiCredentials", () => {
@@ -123,6 +153,38 @@ describe("scrapeApiCredentials", () => {
     const fetchImpl = scriptedFetch([() => res(200, { body: html })]);
     const creds = await scrapeApiCredentials({ csrftoken: "c", sessionid: "s" }, fetchImpl);
     expect(creds).toEqual({ user: "body@genez.io", token: "003|8efc470a6eb1a2808f61ca3bcf24905e", cif: "RO48481960" });
+  });
+
+  it("tags a non-200 integrations page as integrations, not a bad password", async () => {
+    const fetchImpl = scriptedFetch([() => res(500, { body: "boom" })]);
+    await expect(scrapeApiCredentials({ csrftoken: "c", sessionid: "s" }, fetchImpl))
+      .rejects.toMatchObject({ stage: "integrations" });
+  });
+});
+
+describe("sign-in failure messages", () => {
+  const message = (stage: PortalAuthStage) =>
+    authFailureMessage(new PortalAuthError("internal detail", stage));
+
+  it("blames the password only when the password was actually rejected", () => {
+    expect(message("credentials")).toMatch(/did not accept that email and password/i);
+    for (const stage of ["login-page", "no-session", "integrations", "no-api-token"] as const) {
+      expect(message(stage)).not.toMatch(/did not accept that email and password/i);
+    }
+  });
+
+  it("points a user with no API token at the page that proves it", () => {
+    // The whole reason this stage exists: signing in works, the account is fine,
+    // and the only thing missing is API access on that SmartBill user.
+    expect(message("no-api-token")).toMatch(/integrari/);
+    expect(message("no-api-token")).toMatch(/API access/i);
+  });
+
+  it("never leaks the internal detail to the page", () => {
+    for (const stage of
+      ["credentials", "login-page", "no-session", "integrations", "no-api-token"] as const) {
+      expect(message(stage)).not.toContain("internal detail");
+    }
   });
 });
 

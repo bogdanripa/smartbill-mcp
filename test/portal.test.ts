@@ -48,10 +48,31 @@ function makeFakePortal(): FakePortal {
         "set-cookie": "csrftoken=tok123; Path=/",
       });
     }
-    if (path === "/auth/login/" && method === "POST") {
+    // The endpoint the browser posts: JSON verdict, then a login-key hop that is
+    // what actually establishes the session.
+    if (path === "/auth/login/ajax/" && method === "POST") {
       loginCount += 1;
-      if (!portal.loginSucceeds) return makeResponse(302, null, { location: "/auth/login/" });
-      return makeResponse(302, null, { location: "/", "set-cookie": `sessionid=sess-${loginCount}; Path=/` });
+      if (!portal.loginSucceeds) {
+        return makeResponse(
+          200,
+          JSON.stringify({
+            successfully: false,
+            errorText: "Datele de autentificare sunt incorecte. Te rugam reincearca.",
+          }),
+          { "content-type": "application/json" },
+        );
+      }
+      return makeResponse(
+        200,
+        JSON.stringify({
+          successfully: true, errorText: "", force_redirect: true,
+          url: "/auth/login-key/abc", security_code: null,
+        }),
+        { "content-type": "application/json", "set-cookie": `sessionid=sess-${loginCount}; Path=/` },
+      );
+    }
+    if (path === "/auth/login-key/abc" && method === "GET") {
+      return makeResponse(302, null, { location: "/" });
     }
     if (path === "/" && method === "GET") {
       return makeResponse(200, "ok");

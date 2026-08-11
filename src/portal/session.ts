@@ -12,20 +12,21 @@ export const PORTAL_BASE_URL = "https://cloud.smartbill.ro";
 
 export type PortalCookies = Record<string, string>;
 
-/** Login failed for a reason retrying won't fix (bad credentials, or an MFA/step-up). */
 /**
  * Which step of the portal sign-in failed.
  *
- * Only `credentials` means the password was wrong. The others are sign-ins that
- * *worked* and then hit something else, and telling someone their password was
- * rejected when it was not sends them to re-type it for ever — which is exactly
- * what happened before this existed.
+ * Only `credentials` means SmartBill turned the sign-in down. The others are
+ * sign-ins that *worked* and then hit something else, and telling someone their
+ * password was rejected when it was not sends them to re-type a correct password
+ * for ever — which is exactly what happened before this existed.
  */
 export type PortalAuthStage =
-  /** The login form could not be read — SmartBill changed the page, or blocked us. */
+  /** The login form or endpoint could not be read — SmartBill changed it, or blocked us. */
   | "login-page"
-  /** SmartBill bounced the sign-in back to the login form. The real bad-password case. */
+  /** SmartBill turned the sign-in down and said why. `portalText` carries its words. */
   | "credentials"
+  /** SmartBill wants a device confirmation code, which this server cannot supply. */
+  | "security-code"
   /** Signed in, but no session cookie came back. */
   | "no-session"
   /** Signed in, but the integrations page did not load. */
@@ -37,6 +38,13 @@ export class PortalAuthError extends Error {
   constructor(
     message: string,
     readonly stage: PortalAuthStage = "credentials",
+    /**
+     * SmartBill's own words for the refusal, when it gave any. Preferred over
+     * anything we would write: it distinguishes a wrong password from a locked
+     * account or a rate-limit, and it is already in the user's language. Us
+     * re-classifying it is how the original bug happened one level down.
+     */
+    readonly portalText?: string,
   ) {
     super(message);
     this.name = "PortalAuthError";
@@ -76,11 +84,33 @@ function absorb(jar: PortalCookies, res: Response): void {
   }
 }
 
-// ---- login (multi-hop: POST -> /auth/login-key/ -> /) ---------------------
+/** The JSON /auth/login/ajax/ answers with. Only the fields we act on. */
+interface AjaxLoginResult {
+  successfully?: boolean;
+  /** SmartBill's own refusal text, e.g. "Datele de autentificare sunt incorecte." */
+  errorText?: string;
+  /** The /auth/login-key/<key> hop that actually establishes the session. */
+  url?: string;
+  force_redirect?: boolean;
+  /** Non-null when SmartBill wants a device confirmation code. */
+  security_code?: unknown;
+}
+
+// ---- login (POST /auth/login/ajax/ -> /auth/login-key/ -> /) --------------
 /**
- * Signs in and returns the resulting cookie jar. Throws PortalAuthError if the
- * flow bounces back to the login form (wrong credentials or an MFA/step-up
- * this can't complete).
+ * Signs in and returns the resulting cookie jar.
+ *
+ * This posts the **same endpoint the browser posts**, `/auth/login/ajax/`, rather
+ * than the plain form. The form version only tells you it failed by bouncing back
+ * to the login page, so every refusal looked identical and got reported as a bad
+ * password. The AJAX endpoint answers with `successfully` and an `errorText` in
+ * SmartBill's own words, which is the difference between "wrong password" and
+ * "account locked" — a distinction we should never be guessing at.
+ *
+ * The response is not itself a session: it carries `force_redirect` and a
+ * `/auth/login-key/<key>` URL that has to be followed before the session works.
+ * Verified against the live portal — skipping that hop leaves a half-session that
+ * gets bounced off the integrations page.
  */
 export async function login(email: string, password: string, fetchImpl: typeof fetch): Promise<PortalCookies> {
   const jar: PortalCookies = {};
@@ -89,26 +119,56 @@ export async function login(email: string, password: string, fetchImpl: typeof f
   absorb(jar, pageRes);
   const html = await pageRes.text();
   const tokenMatch = html.match(/name="csrfmiddlewaretoken"\s+value="([^"]+)"/);
-  if (!tokenMatch) {
+  const csrf = tokenMatch?.[1] ?? jar.csrftoken;
+  if (!csrf) {
     throw new PortalAuthError(
       "Could not find the CSRF token on the SmartBill login page.", "login-page");
   }
 
-  let res = await fetchImpl(`${PORTAL_BASE_URL}/auth/login/?next=/`, {
+  const ajax = await fetchImpl(`${PORTAL_BASE_URL}/auth/login/ajax/`, {
     method: "POST",
     redirect: "manual",
     headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
+      "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+      "X-Requested-With": "XMLHttpRequest",
+      "X-CSRFToken": jar.csrftoken ?? csrf,
+      Accept: "application/json, text/javascript, */*; q=0.01",
       Origin: PORTAL_BASE_URL,
       Referer: `${PORTAL_BASE_URL}/auth/login/?next=/`,
       Cookie: cookieHeader(jar),
     },
     body: new URLSearchParams({
-      csrfmiddlewaretoken: tokenMatch[1] ?? "",
+      csrfmiddlewaretoken: csrf,
       username: email,
       password,
       next: "/",
+      isTrustedDevice: "false",
     }),
+  });
+  absorb(jar, ajax);
+
+  const raw = await ajax.text();
+  let result: AjaxLoginResult;
+  try {
+    result = JSON.parse(raw) as AjaxLoginResult;
+  } catch {
+    // Not JSON: the endpoint moved, or something in front of it answered instead.
+    throw new PortalAuthError(
+      `The SmartBill login endpoint returned HTTP ${ajax.status} and not JSON.`, "login-page");
+  }
+
+  if (result.successfully === false) {
+    const text = (result.errorText ?? "").trim();
+    throw new PortalAuthError(
+      text || "SmartBill refused the sign-in without saying why.",
+      "credentials",
+      text || undefined);
+  }
+
+  let res = await fetchImpl(new URL(result.url ?? "/", PORTAL_BASE_URL).toString(), {
+    method: "GET",
+    redirect: "manual",
+    headers: { Cookie: cookieHeader(jar), Referer: `${PORTAL_BASE_URL}/` },
   });
   absorb(jar, res);
 
@@ -132,6 +192,17 @@ export async function login(email: string, password: string, fetchImpl: typeof f
 
   const hasSession = Object.keys(jar).some((name) => name !== "csrftoken");
   if (!hasSession) {
+    // security_code is checked HERE rather than up front, on purpose. It reads
+    // like a device-confirmation step-up and it is null on a normal sign-in, but
+    // that is inference from one observation — failing on it eagerly would break
+    // every login if it turns out to be set in some harmless case too. Reaching
+    // this point means the sign-in genuinely did not produce a session, so it can
+    // only improve the explanation, never cause the failure.
+    if (result.security_code != null) {
+      throw new PortalAuthError(
+        "SmartBill asked for a device confirmation code, which this server cannot supply.",
+        "security-code");
+    }
     throw new PortalAuthError(
       "Sign-in completed but SmartBill set no session cookie.", "no-session");
   }

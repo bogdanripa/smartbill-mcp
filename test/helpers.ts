@@ -99,10 +99,31 @@ export function makeSmartBillStub(options: SmartBillStubOptions = {}) {
           "set-cookie": "csrftoken=tok; Path=/",
         });
       }
-      if (path === "/auth/login/" && method === "POST") {
+      // The endpoint the browser posts: JSON verdict, then a login-key hop that
+      // is what actually establishes the session.
+      if (path === "/auth/login/ajax/" && method === "POST") {
         loginCount += 1;
-        if (options.loginSucceeds === false) return stubResponse(302, null, { location: "/auth/login/" });
-        return stubResponse(302, null, { location: "/", "set-cookie": `sessionid=s${loginCount}; Path=/` });
+        if (options.loginSucceeds === false) {
+          return stubResponse(
+            200,
+            JSON.stringify({
+              successfully: false,
+              errorText: "Datele de autentificare sunt incorecte. Te rugam reincearca.",
+            }),
+            { "content-type": "application/json" },
+          );
+        }
+        return stubResponse(
+          200,
+          JSON.stringify({
+            successfully: true, errorText: "", force_redirect: true,
+            url: "/auth/login-key/abc", security_code: null,
+          }),
+          { "content-type": "application/json", "set-cookie": `sessionid=s${loginCount}; Path=/` },
+        );
+      }
+      if (path === "/auth/login-key/abc" && method === "GET") {
+        return stubResponse(302, null, { location: "/" });
       }
       if (path === "/" && method === "GET") return stubResponse(200, "ok");
       if (path === "/core/integrari/") {

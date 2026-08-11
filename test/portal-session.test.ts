@@ -85,61 +85,94 @@ describe("portal endpoint builders", () => {
 });
 
 describe("portal login", () => {
-  it("follows the login-key redirect chain and returns the session cookies", async () => {
+  const loginPage = () =>
+    res(200, {
+      body: '<input type="hidden" name="csrfmiddlewaretoken" value="MW123">',
+      setCookie: ["csrftoken=csrf1; Path=/"],
+    });
+  /** What /auth/login/ajax/ answers, shaped from a real capture. */
+  const ajax = (body: Record<string, unknown>, setCookie?: string[]) =>
+    res(200, { body: JSON.stringify(body), ...(setCookie ? { setCookie } : {}) });
+
+  it("posts the ajax endpoint, follows the login-key hop and returns the cookies", async () => {
+    const seen: string[] = [];
     const fetchImpl = scriptedFetch([
-      // 1. GET login page → csrftoken + middleware token
-      () =>
-        res(200, {
-          body: '<input type="hidden" name="csrfmiddlewaretoken" value="MW123">',
-          setCookie: ["csrftoken=csrf1; Path=/"],
-        }),
-      // 2. POST credentials → 302 to login-key
-      () => res(302, { location: "/auth/login-key/abc/?srvid=3&next=/", setCookie: ["srvid=3; Path=/"] }),
-      // 3. GET login-key → 302 to / , sets sessionid
-      () => res(302, { location: "/", setCookie: ["sessionid=sess1; Path=/"] }),
-      // 4. GET / → 200
-      () => res(200, { body: "<html>dashboard</html>" }),
+      (url) => { seen.push(url); return loginPage(); },
+      // The browser's endpoint: a JSON verdict plus the hop that completes the session.
+      (url) => { seen.push(url); return ajax(
+        { successfully: true, errorText: "", force_redirect: true,
+          url: "/auth/login-key/abc/?srvid=3&next=/", security_code: null },
+        ["srvid=3; Path=/"]); },
+      (url) => { seen.push(url); return res(302, { location: "/", setCookie: ["sessionid=sess1; Path=/"] }); },
+      (url) => { seen.push(url); return res(200, { body: "<html>dashboard</html>" }); },
     ]);
 
     const jar = await login("me@example.com", "pw", fetchImpl);
+    expect(seen[1]).toContain("/auth/login/ajax/");
+    expect(seen[2]).toContain("/auth/login-key/abc/");
     expect(jar).toMatchObject({ csrftoken: "csrf1", srvid: "3", sessionid: "sess1" });
     expect(cookieHeader(jar)).toContain("sessionid=sess1");
   });
 
-  it("throws PortalAuthError when the flow bounces back to the login form", async () => {
-    const fetchImpl = scriptedFetch([
-      () => res(200, { body: '<input name="csrfmiddlewaretoken" value="MW">', setCookie: ["csrftoken=c; Path=/"] }),
-      () => res(302, { location: "/auth/login/?next=/" }), // straight back to the form = rejected
-    ]);
-    await expect(login("me@example.com", "bad", fetchImpl)).rejects.toBeInstanceOf(PortalAuthError);
+  // The stage is what decides whether someone is told their password was wrong,
+  // so each failure has to carry the right one. Only SmartBill actually refusing
+  // is a credentials problem; the rest are sign-ins that got further than that.
+  it("carries SmartBill's own refusal text rather than a guess at the reason", async () => {
+    const errorText = "Datele de autentificare sunt incorecte. Te rugam reincearca.";
+    const fetchImpl = scriptedFetch([loginPage, () => ajax({ successfully: false, errorText })]);
+    await expect(login("me@example.com", "bad", fetchImpl))
+      .rejects.toMatchObject({ stage: "credentials", portalText: errorText });
   });
 
-  // The stage is what decides whether someone is told their password was wrong,
-  // so each failure has to carry the right one. Only a bounce back to the login
-  // form is a bad password; the rest are sign-ins that got further than that.
-  it("tags a bounce back to the login form as a credentials failure", async () => {
-    const fetchImpl = scriptedFetch([
-      () => res(200, { body: '<input name="csrfmiddlewaretoken" value="MW">', setCookie: ["csrftoken=c; Path=/"] }),
-      () => res(302, { location: "/auth/login/?next=/" }),
-    ]);
+  it("does not invent a reason when SmartBill refuses without giving one", async () => {
+    const fetchImpl = scriptedFetch([loginPage, () => ajax({ successfully: false, errorText: "" })]);
     await expect(login("me@example.com", "bad", fetchImpl))
-      .rejects.toMatchObject({ stage: "credentials" });
+      .rejects.toMatchObject({ stage: "credentials", portalText: undefined });
   });
 
   it("tags an unreadable login page as login-page, not a bad password", async () => {
-    // No csrfmiddlewaretoken: SmartBill changed the form, or served a block page.
+    // No csrfmiddlewaretoken and no csrftoken cookie: the page is not what we expect.
     const fetchImpl = scriptedFetch([() => res(200, { body: "<html>maintenance</html>" })]);
+    await expect(login("me@example.com", "pw", fetchImpl))
+      .rejects.toMatchObject({ stage: "login-page" });
+  });
+
+  it("tags a non-JSON login response as login-page, not a bad password", async () => {
+    // The endpoint moved, or something in front of it answered instead.
+    const fetchImpl = scriptedFetch([loginPage, () => res(502, { body: "<html>bad gateway</html>" })]);
     await expect(login("me@example.com", "pw", fetchImpl))
       .rejects.toMatchObject({ stage: "login-page" });
   });
 
   it("tags a sign-in that sets no session cookie as no-session", async () => {
     const fetchImpl = scriptedFetch([
-      () => res(200, { body: '<input name="csrfmiddlewaretoken" value="MW">' }),
-      () => res(200, { body: "<html>ok</html>" }), // no redirect, no session cookie
+      loginPage,
+      () => ajax({ successfully: true, url: "/", security_code: null }),
+      () => res(200, { body: "<html>ok</html>" }), // no session cookie anywhere
     ]);
     await expect(login("me@example.com", "pw", fetchImpl))
       .rejects.toMatchObject({ stage: "no-session" });
+  });
+
+  it("blames a device confirmation code only when the sign-in produced no session", async () => {
+    // security_code is inference from one observation, so it must never be able to
+    // fail a sign-in that otherwise worked — it only sharpens the explanation.
+    const stepUp = scriptedFetch([
+      loginPage,
+      () => ajax({ successfully: true, url: "/", security_code: "sent" }),
+      () => res(200, { body: "<html>enter the code</html>" }),
+    ]);
+    await expect(login("me@example.com", "pw", stepUp))
+      .rejects.toMatchObject({ stage: "security-code" });
+
+    const worked = scriptedFetch([
+      loginPage,
+      () => ajax({ successfully: true, url: "/", security_code: "sent" },
+        ["sessionid=sess9; Path=/"]),
+      () => res(200, { body: "<html>dashboard</html>" }),
+    ]);
+    await expect(worked ? login("me@example.com", "pw", worked) : null)
+      .resolves.toMatchObject({ sessionid: "sess9" });
   });
 });
 

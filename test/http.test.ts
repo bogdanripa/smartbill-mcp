@@ -313,7 +313,11 @@ describe("OAuth", () => {
     );
 
     expect(response.status).toBe(401);
-    expect(await response.text()).toContain("did not accept");
+    // SmartBill's own words reach the page, rather than a reason we invented for
+    // it — that guess is what told people their password was wrong when it wasn't.
+    const page = await response.text();
+    expect(page).toContain("Datele de autentificare sunt incorecte");
+    expect(page).not.toContain("internal");
   });
 
   it("completes the flow end-to-end and authenticates an MCP call as the tenant", async () => {

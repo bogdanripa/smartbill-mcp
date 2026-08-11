@@ -35,7 +35,17 @@ export interface OAuthContext {
 export function authFailureMessage(error: PortalAuthError): string {
   switch (error.stage) {
     case "credentials":
-      return "SmartBill did not accept that email and password. Please try again.";
+      // SmartBill's own wording, when it gave any: it separates a wrong password
+      // from a locked or rate-limited account, and it is already in the language
+      // the person signing in uses. Re-writing it in English would throw away the
+      // only authoritative account of what went wrong.
+      return error.portalText
+        ? `SmartBill refused the sign-in: ${error.portalText}`
+        : "SmartBill did not accept that email and password. Please try again.";
+    case "security-code":
+      return "SmartBill wants a confirmation code for this device, which this " +
+        "connection cannot enter. Sign in to cloud.smartbill.ro in a browser " +
+        "first and mark the device as trusted, then try again.";
     case "no-api-token":
       return "Signed in to SmartBill, but this user has no API token. Open " +
         "cloud.smartbill.ro/core/integrari/ — if it shows no token, ask whoever " +

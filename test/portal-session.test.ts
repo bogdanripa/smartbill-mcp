@@ -212,6 +212,45 @@ describe("scrapeApiCredentials", () => {
     });
   });
 
+  // The real page, as served today. The Romanian labels are still present but the
+  // mailto href percent-encodes them, so "Token-ul este" with a literal space
+  // matches nothing — the text is there and simply unreadable to the old regex.
+  it("reads the live page: JS config, visible markup, and the encoded mailto", async () => {
+    const html = [
+      '<span class="token_key">003|8efc470a6eb1a2808f61ca3bcf24905e</span>',
+      '<a href="mailto:?subject=x&body=Salut%2C%0D%0A',
+      'User-ul%20meu%20este%20body%40genez.io%0D%0A',
+      'Token-ul%20este%20003%7C8efc470a6eb1a2808f61ca3bcf24905e%0D%0A',
+      'CIF-ul%20firmei%20este%20RO48481960.%0D%0A">aici</a>',
+    ].join("");
+    const fetchImpl = scriptedFetch([() => res(200, { body: html })]);
+    const creds = await scrapeApiCredentials({ csrftoken: "c", sessionid: "s" }, fetchImpl);
+    expect(creds.token).toBe("003|8efc470a6eb1a2808f61ca3bcf24905e");
+    expect(creds.cif).toBe("RO48481960");
+    expect(creds.user).toBe("body@genez.io");
+  });
+
+  // With no JS config and no visible span, the encoded mailto alone must carry it.
+  it("recovers the credentials from the encoded mailto blob alone", async () => {
+    const html =
+      "body=Salut%2C%0D%0AUser-ul%20meu%20este%20body%40genez.io%0D%0A" +
+      "Token-ul%20este%20003%7C8efc470a6eb1a2808f61ca3bcf24905e%0D%0A" +
+      "CIF-ul%20firmei%20este%20RO48481960.%0D%0A";
+    const fetchImpl = scriptedFetch([() => res(200, { body: html })]);
+    const creds = await scrapeApiCredentials({ csrftoken: "c", sessionid: "s" }, fetchImpl);
+    expect(creds.token).toBe("003|8efc470a6eb1a2808f61ca3bcf24905e");
+    expect(creds.cif).toBe("RO48481960");
+    expect(creds.user).toBe("body@genez.io");
+  });
+
+  // If the labels change language entirely, the token's own shape still carries.
+  it("falls back to the token's shape when every label is unrecognisable", async () => {
+    const html = 'window.cfg = { someKey: "x" }; the token is 003|8efc470a6eb1a2808f61ca3bcf24905e here';
+    const fetchImpl = scriptedFetch([() => res(200, { body: html })]);
+    const creds = await scrapeApiCredentials({ csrftoken: "c", sessionid: "s" }, fetchImpl);
+    expect(creds.token).toBe("003|8efc470a6eb1a2808f61ca3bcf24905e");
+  });
+
   it("still reads the old page shape, so an account served it keeps working", async () => {
     const html = [
       "'User-ul meu este old@genez.io%0D%0A',",

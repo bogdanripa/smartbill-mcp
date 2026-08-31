@@ -47,10 +47,15 @@ export function authFailureMessage(error: PortalAuthError): string {
         "connection cannot enter. Sign in to cloud.smartbill.ro in a browser " +
         "first and mark the device as trusted, then try again.";
     case "no-api-token":
-      return "Signed in to SmartBill, but this user has no API token. Open " +
-        "cloud.smartbill.ro/core/integrari/ — if it shows no token, ask whoever " +
-        "administers the account to enable API access for this user, or use an " +
-        "account that already has it.";
+      // This used to assert the account lacked API access. That was a guess, and
+      // it was wrong: the token was present and the page had simply changed shape
+      // under the scraper, so people were sent to an administrator over a bug on
+      // this side. Say what was observed and let the page settle which it is.
+      return "Signed in to SmartBill, but no API token could be read from the " +
+        "integrations page. Open cloud.smartbill.ro/core/integrari/ — if a token " +
+        "IS shown there, this is a fault on our side, not your account, so please " +
+        "report it. If no token is shown, ask whoever administers the account to " +
+        "enable API access for this user.";
     case "integrations":
       return "Signed in to SmartBill, but its integrations page did not load, so " +
         "the API token could not be read. This is usually temporary — try again " +

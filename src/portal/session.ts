@@ -210,6 +210,25 @@ export async function login(email: string, password: string, fetchImpl: typeof f
 }
 
 // ---- integrations scrape (bootstraps the scoped API token) ----------------
+
+/** Percent-decodes a value when the page encoded it (the mailto blob does). */
+function decodeMaybe(value: string): string {
+  if (!value.includes("%")) return value;
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value; // a stray % that is not an escape — take it as-is
+  }
+}
+
+/**
+ * A labelled value, tolerant of how the page happens to encode the gaps: the
+ * visible markup uses real spaces, the mailto blob uses %20.
+ */
+function labelled(words: string[], capture: string): RegExp {
+  const gap = "(?:%20|\\s)+";
+  return new RegExp(words.join(gap) + gap + capture);
+}
 export async function scrapeApiCredentials(
   jar: PortalCookies,
   fetchImpl: typeof fetch,
@@ -219,29 +238,38 @@ export async function scrapeApiCredentials(
     throw new PortalAuthError(
       `Integrations page returned HTTP ${status}; cannot read the API token.`, "integrations");
   }
-  // First match wins, so the CURRENT page shape is tried before the old one.
+  // First match wins, so the most specific anchor is tried first and the loosest
+  // last. Every pattern is deliberately independent of prose and of encoding:
+  // hard-coding "Token-ul este" with a literal space is what broke this, twice
+  // over — the label is Romanian (so a language switch kills it) and the mailto
+  // blob is now percent-encoded (so %20 kills it even in Romanian).
   const pick = (...patterns: RegExp[]): string | null => {
     for (const re of patterns) {
-      const value = (text.match(re)?.[1] ?? "").trim();
-      if (value) return value;
+      const raw = (text.match(re)?.[1] ?? "").trim();
+      if (raw) return decodeMaybe(raw).trim();
     }
     return null;
   };
 
-  // SmartBill rebuilt this page: the values used to sit in a Romanian mailto
-  // blob ("Token-ul este <token>%0D"), and now live in a JS config object as
-  // userKey / properCif / userEmail. Verified against the live page — userKey is
-  // byte-identical to the token this server already had stored, and there is
-  // only one token-shaped value on the page, so the new API v3 section cannot be
-  // picked up by mistake.
-  //
-  // The old patterns stay as fallbacks. They cost nothing, and an account still
-  // being served the previous page must not be told its password is wrong.
   return {
-    user: pick(/userEmail\s*:\s*"([^"]+)"/, /User-ul meu este\s+(.+?)%0D/),
-    token: pick(/userKey\s*:\s*"([^"]+)"/, /Token-ul este\s+(.+?)%0D/),
-    cif: pick(/properCif\s*:\s*"([^"]+)"/, /companyCif\s*:\s*"([^"]+)"/,
-              /CIF-ul firmei este\s+([A-Z0-9]+)/),
+    user: pick(
+      /userEmail\s*:\s*"([^"]+)"/,
+      labelled(["User-ul", "meu", "este"], "([^\\s<]+?)(?:%0D|<|\\s|$)"),
+    ),
+    token: pick(
+      /userKey\s*:\s*"([^"]+)"/,
+      /class="token_key"[^>]*>\s*([^<]+?)\s*</,
+      labelled(["Token-ul", "este"], "([^\\s<]+?)(?:%0D|<|\\s|$)"),
+      // Last resort: the token's own shape. Only one such value exists on the
+      // page (checked against the live one), so this cannot pick up the API v3
+      // section by mistake.
+      /(00\d(?:%7C|\|)[0-9a-f]{16,})/i,
+    ),
+    cif: pick(
+      /properCif\s*:\s*"([^"]+)"/,
+      /companyCif\s*:\s*"([^"]+)"/,
+      labelled(["CIF-ul", "firmei", "este"], "([A-Z0-9]+)"),
+    ),
   };
 }
 

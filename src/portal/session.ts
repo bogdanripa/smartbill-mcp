@@ -219,14 +219,29 @@ export async function scrapeApiCredentials(
     throw new PortalAuthError(
       `Integrations page returned HTTP ${status}; cannot read the API token.`, "integrations");
   }
-  const pick = (re: RegExp): string | null => {
-    const m = text.match(re);
-    return m ? (m[1] ?? "").trim() : null;
+  // First match wins, so the CURRENT page shape is tried before the old one.
+  const pick = (...patterns: RegExp[]): string | null => {
+    for (const re of patterns) {
+      const value = (text.match(re)?.[1] ?? "").trim();
+      if (value) return value;
+    }
+    return null;
   };
+
+  // SmartBill rebuilt this page: the values used to sit in a Romanian mailto
+  // blob ("Token-ul este <token>%0D"), and now live in a JS config object as
+  // userKey / properCif / userEmail. Verified against the live page — userKey is
+  // byte-identical to the token this server already had stored, and there is
+  // only one token-shaped value on the page, so the new API v3 section cannot be
+  // picked up by mistake.
+  //
+  // The old patterns stay as fallbacks. They cost nothing, and an account still
+  // being served the previous page must not be told its password is wrong.
   return {
-    user: pick(/User-ul meu este\s+(.+?)%0D/),
-    token: pick(/Token-ul este\s+(.+?)%0D/),
-    cif: pick(/CIF-ul firmei este\s+([A-Z0-9]+)/),
+    user: pick(/userEmail\s*:\s*"([^"]+)"/, /User-ul meu este\s+(.+?)%0D/),
+    token: pick(/userKey\s*:\s*"([^"]+)"/, /Token-ul este\s+(.+?)%0D/),
+    cif: pick(/properCif\s*:\s*"([^"]+)"/, /companyCif\s*:\s*"([^"]+)"/,
+              /CIF-ul firmei este\s+([A-Z0-9]+)/),
   };
 }
 

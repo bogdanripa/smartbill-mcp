@@ -193,6 +193,36 @@ describe("scrapeApiCredentials", () => {
     await expect(scrapeApiCredentials({ csrftoken: "c", sessionid: "s" }, fetchImpl))
       .rejects.toMatchObject({ stage: "integrations" });
   });
+
+  // SmartBill rebuilt the page: the Romanian mailto blob the original patterns
+  // read is gone, and every new sign-up failed the scrape — reported as a wrong
+  // password. Shape taken from the live page.
+  it("reads the current page, where the values live in a JS config object", async () => {
+    const html = [
+      'subscriptionPackageName: "Platinum", subscriptionIsExpired: false,',
+      'userEmail: "body@genez.io", userKey: "003|8efc470a6eb1a2808f61ca3bcf24905e",',
+      'properCif: "RO48481960", companyCif: "RO48481960",',
+    ].join("\n");
+    const fetchImpl = scriptedFetch([() => res(200, { body: html })]);
+    const creds = await scrapeApiCredentials({ csrftoken: "c", sessionid: "s" }, fetchImpl);
+    expect(creds).toEqual({
+      user: "body@genez.io",
+      token: "003|8efc470a6eb1a2808f61ca3bcf24905e",
+      cif: "RO48481960",
+    });
+  });
+
+  it("still reads the old page shape, so an account served it keeps working", async () => {
+    const html = [
+      "'User-ul meu este old@genez.io%0D%0A',",
+      "'Token-ul este 003|old470a6eb1a2808f61ca3bcf24905e%0D%0A',",
+      "'CIF-ul firmei este RO12345678.%0D%0A',",
+    ].join("\n");
+    const fetchImpl = scriptedFetch([() => res(200, { body: html })]);
+    const creds = await scrapeApiCredentials({ csrftoken: "c", sessionid: "s" }, fetchImpl);
+    expect(creds.token).toBe("003|old470a6eb1a2808f61ca3bcf24905e");
+    expect(creds.cif).toBe("RO12345678");
+  });
 });
 
 describe("sign-in failure messages", () => {

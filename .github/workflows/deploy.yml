@@ -7,9 +7,8 @@ on:
 
 # Every run pushes the same `:latest` tag, and the box deploys whatever `:latest`
 # points at. Two overlapping runs therefore race, and the one that finishes last
-# wins regardless of which commit is newer — an arm64 build takes ~15 minutes
-# under QEMU, so a quick follow-up commit can easily finish first and be undone
-# by its predecessor. Serialise on the branch and drop superseded runs.
+# wins regardless of which commit is newer. Serialise on the branch and drop
+# superseded runs.
 concurrency:
   group: deploy-${{ github.ref }}
   cancel-in-progress: true
@@ -31,14 +30,18 @@ jobs:
             "https://api-coolify.bogdanripa.com/apps/smartbill-mcp/frontend"
 
   deploy:
-    runs-on: ubuntu-latest
+    # NATIVE arm64, not x86 emulating it. The Pi is arm64, and this image used to
+    # be cross-built under QEMU on an x86 runner: the Dockerfile runs `npm ci`
+    # twice and `tsc` once, and emulating all three took 15-30 minutes, with the
+    # variance coming from the runner rather than from anything in the change.
+    # GitHub's arm64 hosted runners are free for public repositories.
+    runs-on: ubuntu-24.04-arm
     permissions:
       contents: read
       packages: write
     steps:
       - uses: actions/checkout@v4
 
-      - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
 
       - uses: docker/login-action@v3
@@ -54,6 +57,12 @@ jobs:
         with:
           platforms: linux/arm64
           push: true
+          # Without this every build is cold: nothing carries between runs, so
+          # `npm ci` reinstalls from scratch even when package-lock.json is
+          # untouched. Keyed by the layer inputs, so a lockfile change still
+          # rebuilds honestly.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
           build-args: |
             BUILD_SHA=${{ github.sha }}
           tags: |

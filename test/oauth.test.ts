@@ -191,3 +191,101 @@ describe("OAuthProvider", () => {
     await expect(badProvider.completeAuthorization(request, EMAIL, "bad")).rejects.toBeInstanceOf(PortalAuthError);
   });
 });
+
+describe("long-lived API tokens", () => {
+  // The reason this exists: an OAuth access token lasts an hour and its refresh
+  // token dies 30 days after issue without being extended by use, so any
+  // unattended job breaks monthly. These do not expire unless asked to.
+  const API_TOKEN = "003|abc";
+  const API_CIF = "RO7";
+
+  let store: InMemoryOAuthStore;
+  let tenants: InMemoryTenantStore;
+  let provider: OAuthProvider;
+  let clock: number;
+
+  beforeEach(() => {
+    store = new InMemoryOAuthStore();
+    tenants = new InMemoryTenantStore();
+    const portal = new PortalService(tenants, makeSmartBillStub({ apiToken: API_TOKEN, cif: API_CIF }).impl);
+    clock = 1_000_000;
+    provider = new OAuthProvider(store, tenants, portal, () => clock);
+  });
+
+  it("mints a token that resolves the account, and never expires by default", async () => {
+    const created = await provider.createApiToken(EMAIL, PASSWORD, { name: "attio sync" });
+    expect(created.token.startsWith("sbmcp_")).toBe(true);
+    expect(created.expiresAt).toBeNull();
+
+    const creds = await provider.verifyApiToken(created.token);
+    expect(creds).toEqual({ username: EMAIL, token: API_TOKEN, companyVatCode: API_CIF });
+  });
+
+  it("refuses to mint one on bad SmartBill credentials", async () => {
+    const badPortal = new PortalService(new InMemoryTenantStore(), makeSmartBillStub({ loginSucceeds: false }).impl);
+    const badProvider = new OAuthProvider(store, tenants, badPortal, () => clock);
+    await expect(badProvider.createApiToken(EMAIL, "wrong")).rejects.toBeInstanceOf(PortalAuthError);
+  });
+
+  it("honours an explicit expiry and rejects the token once past it", async () => {
+    const created = await provider.createApiToken(EMAIL, PASSWORD, { expiresInDays: 7 });
+    expect(created.expiresAt).toBe(clock + 7 * 24 * 60 * 60 * 1000);
+    await expect(provider.verifyApiToken(created.token)).resolves.toMatchObject({ username: EMAIL });
+
+    clock += 7 * 24 * 60 * 60 * 1000 + 1;
+    await expect(provider.verifyApiToken(created.token)).rejects.toBeInstanceOf(OAuthError);
+  });
+
+  it("rejects a nonsense expiry rather than storing it", async () => {
+    await expect(provider.createApiToken(EMAIL, PASSWORD, { expiresInDays: 0 }))
+      .rejects.toBeInstanceOf(OAuthError);
+    await expect(provider.createApiToken(EMAIL, PASSWORD, { expiresInDays: -5 }))
+      .rejects.toBeInstanceOf(OAuthError);
+  });
+
+  it("lists tokens without ever exposing the secret", async () => {
+    const created = await provider.createApiToken(EMAIL, PASSWORD, { name: "listed" });
+    const listed = await provider.listApiTokens(EMAIL);
+    expect(listed.find((t) => t.id === created.id)?.name).toBe("listed");
+    expect(JSON.stringify(listed)).not.toContain(created.token);
+  });
+
+  it("revokes by id, and the token stops working immediately", async () => {
+    const created = await provider.createApiToken(EMAIL, PASSWORD);
+    await expect(provider.verifyApiToken(created.token)).resolves.toMatchObject({ username: EMAIL });
+
+    expect(await provider.revokeApiToken(EMAIL, created.id)).toBe(true);
+    await expect(provider.verifyApiToken(created.token)).rejects.toBeInstanceOf(OAuthError);
+    expect(await provider.revokeApiToken(EMAIL, created.id)).toBe(false);
+  });
+
+  it("will not let one account revoke another account's token", async () => {
+    const created = await provider.createApiToken(EMAIL, PASSWORD);
+    expect(await provider.revokeApiToken("someone-else@example.com", created.id)).toBe(false);
+    await expect(provider.verifyApiToken(created.token)).resolves.toMatchObject({ username: EMAIL });
+  });
+
+  it("keeps the two kinds of bearer apart", async () => {
+    const created = await provider.createApiToken(EMAIL, PASSWORD);
+    await expect(provider.verifyBearer(created.token)).rejects.toBeInstanceOf(OAuthError);
+    await expect(provider.verifyApiToken("not-a-real-token")).rejects.toBeInstanceOf(OAuthError);
+  });
+
+  it("records last use, but not on every single call", async () => {
+    const created = await provider.createApiToken(EMAIL, PASSWORD);
+    const lastUsed = async () =>
+      (await provider.listApiTokens(EMAIL)).find((t) => t.id === created.id)?.lastUsedAt;
+
+    await provider.verifyApiToken(created.token);
+    const first = await lastUsed();
+    expect(first).toBe(clock);
+
+    clock += 60 * 1000; // a minute later: too soon to write again
+    await provider.verifyApiToken(created.token);
+    expect(await lastUsed()).toBe(first);
+
+    clock += 60 * 60 * 1000; // past the resolution window
+    await provider.verifyApiToken(created.token);
+    expect(await lastUsed()).toBe(clock);
+  });
+});

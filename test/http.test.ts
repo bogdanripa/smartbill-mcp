@@ -344,6 +344,49 @@ describe("OAuth", () => {
     expect(taxCall?.headers.Authorization).toBe(`Basic ${Buffer.from("owner@example.com:003|scraped").toString("base64")}`);
   });
 
+  // A long-lived API token has to work on exactly the same bearer path as an
+  // OAuth access token — that is the whole promise of the feature.
+  it("mints a long-lived API token and authenticates an MCP call with it", async () => {
+    const stub = makeSmartBillStub({ apiToken: "003|scraped", cif: "RO999" });
+    const runtime = makeRuntime(stub.impl);
+    const { base } = await listen({}, runtime, stub.impl);
+
+    const minted = await post(`${base}/api-tokens`, {
+      email: "owner@example.com", password: "pw", name: "attio sync",
+    });
+    expect(minted.status).toBe(201);
+    const body = await minted.json();
+    expect(body.token.startsWith("sbmcp_")).toBe(true);
+    expect(body.expires_at).toBeNull();
+
+    const auth = { Authorization: `Bearer ${body.token}` };
+    const init = await post(`${base}/mcp`, INITIALIZE, auth);
+    expect(init.status).toBe(200);
+    expect((await readJsonRpc(init)).result.serverInfo.name).toBe("smartbill-mcp");
+
+    // Listing authenticates with the token itself and never returns the secret.
+    const listed = await (await fetch(`${base}/api-tokens`, { headers: auth })).json();
+    expect(listed.tokens).toHaveLength(1);
+    expect(listed.tokens[0].id).toBe(body.id);
+    expect(JSON.stringify(listed)).not.toContain(body.token);
+
+    // Revoking it takes effect immediately.
+    const del = await fetch(`${base}/api-tokens/${body.id}`, { method: "DELETE", headers: auth });
+    expect(del.status).toBe(204);
+    expect((await post(`${base}/mcp`, INITIALIZE, auth)).status).toBe(401);
+  });
+
+  it("will not mint an API token on bad SmartBill credentials", async () => {
+    const stub = makeSmartBillStub({ loginSucceeds: false });
+    const runtime = makeRuntime(stub.impl);
+    const { base } = await listen({}, runtime, stub.impl);
+
+    const res = await post(`${base}/api-tokens`, { email: "owner@example.com", password: "wrong" });
+    expect(res.status).toBe(401);
+    // SmartBill's own words, not a reason we invented for it.
+    expect((await res.json()).message).toContain("Datele de autentificare sunt incorecte");
+  });
+
   it("rejects a revoked access token", async () => {
     const stub = makeSmartBillStub();
     const runtime = makeRuntime(stub.impl);

@@ -11,11 +11,25 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import type { PortalService } from "../portal/service.js";
 import type { TenantStore } from "../store/tenants.js";
-import type { OAuthStore, StoredClient } from "./store.js";
+import type { OAuthStore, StoredApiToken, StoredClient } from "./store.js";
 
 const ACCESS_TOKEN_TTL_MS = 60 * 60 * 1000; // 1 hour
 const AUTH_CODE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 const REFRESH_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+
+/**
+ * Marks a long-lived API token, so the bearer can be routed to the right lookup
+ * without probing both tables on every request — and so a leaked one is
+ * recognisable for what it is in a log or a config file.
+ */
+export const API_TOKEN_PREFIX = "sbmcp_";
+
+/**
+ * How stale last_used_at is allowed to get. Writing it on every request would
+ * mean a database write per MCP call for a busy token; an hour is plenty to
+ * answer "is this thing still in use?".
+ */
+const LAST_USED_RESOLUTION_MS = 60 * 60 * 1000;
 
 /** An OAuth error carrying the RFC 6749 error code and the HTTP status to send. */
 export class OAuthError extends Error {
@@ -76,6 +90,10 @@ function base64UrlSha256(input: string): string {
 }
 function hashToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
+}
+/** Short, non-secret identifier for an API token — what you revoke by. */
+function randomId(): string {
+  return randomBytes(8).toString("hex");
 }
 function randomToken(): string {
   return randomBytes(32).toString("base64url");
@@ -277,5 +295,85 @@ export class OAuthProvider {
   /** Token revocation (RFC 7009). Accepts either an access or a refresh token. */
   async revoke(token: string): Promise<void> {
     await this.store.deleteToken(hashToken(token));
+  }
+
+  // ---- long-lived API tokens ---------------------------------------------
+  //
+  // For machine clients that cannot sit in an OAuth loop: a sync job, a cron,
+  // a script. Minting one proves account ownership the same way the authorize
+  // page does — by signing in to SmartBill — rather than inventing a second
+  // notion of identity.
+
+  /**
+   * Mints a long-lived token for the account behind `email`/`password`.
+   *
+   * The secret is returned HERE AND ONLY HERE; the store keeps its SHA-256 hash,
+   * so a database leak exposes nothing usable and a lost token is replaced, never
+   * recovered.
+   */
+  async createApiToken(
+    email: string,
+    password: string,
+    options: { name?: string; expiresInDays?: number } = {},
+  ): Promise<{ token: string; id: string; name: string; createdAt: number; expiresAt: number | null }> {
+    // Throws PortalAuthError if SmartBill rejects the sign-in, and refreshes the
+    // stored tenant while it is at it.
+    await this.portal.onboard(email, password);
+
+    const days = options.expiresInDays;
+    if (days !== undefined && (!Number.isFinite(days) || days <= 0)) {
+      throw new OAuthError("invalid_request", "expires_in_days must be a positive number of days.");
+    }
+
+    const token = API_TOKEN_PREFIX + randomToken();
+    const record = {
+      id: randomId(),
+      tenantEmail: normaliseEmail(email),
+      name: (options.name ?? "").trim() || "api token",
+      createdAt: this.now(),
+      lastUsedAt: null,
+      // Default: no expiry. That is the whole point — an unattended job should
+      // not fail on a date nobody wrote down.
+      expiresAt: days === undefined ? null : this.now() + days * 24 * 60 * 60 * 1000,
+    };
+    await this.store.saveApiToken(hashToken(token), record);
+    return {
+      token,
+      id: record.id,
+      name: record.name,
+      createdAt: record.createdAt,
+      expiresAt: record.expiresAt,
+    };
+  }
+
+  /**
+   * Verifies a long-lived API token and resolves the tenant's SmartBill
+   * credentials. Same contract as verifyBearer, so the MCP endpoint treats both
+   * kinds of bearer identically once resolved.
+   */
+  async verifyApiToken(token: string): Promise<ResolvedCredentials> {
+    const hash = hashToken(token);
+    const rec = await this.store.getApiToken(hash);
+    if (!rec) throw new OAuthError("invalid_token", "Invalid API token.", 401);
+    if (rec.expiresAt !== null && rec.expiresAt <= this.now()) {
+      throw new OAuthError("invalid_token", "API token has expired.", 401);
+    }
+    const tenant = await this.tenants.get(rec.tenantEmail);
+    if (!tenant) throw new OAuthError("invalid_token", "No SmartBill account is linked to this token.", 401);
+
+    if (rec.lastUsedAt === null || this.now() - rec.lastUsedAt >= LAST_USED_RESOLUTION_MS) {
+      await this.store.touchApiToken(hash, this.now());
+    }
+    return { username: tenant.email, token: tenant.token, companyVatCode: tenant.cif };
+  }
+
+  /** Every API token for one account, without any secret. */
+  async listApiTokens(tenantEmail: string): Promise<StoredApiToken[]> {
+    return this.store.listApiTokens(normaliseEmail(tenantEmail));
+  }
+
+  /** Revokes by public id, scoped to the account that owns it. */
+  async revokeApiToken(tenantEmail: string, id: string): Promise<boolean> {
+    return this.store.deleteApiToken(normaliseEmail(tenantEmail), id);
   }
 }

@@ -14,7 +14,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { PortalAuthError } from "../portal/session.js";
 import { CORS_HEADERS, readBody, sendHtml, sendJson } from "../http-helpers.js";
 import { renderAuthorizePage } from "./page.js";
-import { type AuthorizeRequest, OAuthError, type OAuthProvider } from "./provider.js";
+import { API_TOKEN_PREFIX, type AuthorizeRequest, OAuthError, type OAuthProvider } from "./provider.js";
 
 export interface OAuthContext {
   provider: OAuthProvider;
@@ -122,7 +122,9 @@ export async function handleOAuthRequest(
     path === "/register" ||
     path === "/authorize" ||
     path === "/token" ||
-    path === "/revoke";
+    path === "/revoke" ||
+    path === "/api-tokens" ||
+    path.startsWith("/api-tokens/");
   if (!isOAuthPath) return false;
 
   if (method === "OPTIONS") {
@@ -140,6 +142,79 @@ export async function handleOAuthRequest(
     method === "GET"
   ) {
     sendJson(res, 200, protectedResourceMetadata(baseUrl, mcpPath), CORS_HEADERS);
+    return true;
+  }
+
+  // ---- long-lived API tokens ---------------------------------------------
+  // Minting authenticates with the SmartBill email and password, the same proof
+  // of ownership the authorize page takes. Listing and revoking authenticate
+  // with a bearer, so a machine can rotate its own credential unattended.
+
+  if (path === "/api-tokens" && method === "POST") {
+    try {
+      const body = JSON.parse(await readBody(req)) as Record<string, unknown>;
+      const email = typeof body.email === "string" ? body.email : "";
+      const password = typeof body.password === "string" ? body.password : "";
+      if (!email || !password) {
+        sendJson(res, 400, { error: "invalid_request", message: "email and password are required." }, CORS_HEADERS);
+        return true;
+      }
+      const created = await provider.createApiToken(email, password, {
+        name: typeof body.name === "string" ? body.name : undefined,
+        expiresInDays: typeof body.expires_in_days === "number" ? body.expires_in_days : undefined,
+      });
+      console.error(
+        `smartbill-mcp: api token ${created.id} ("${created.name}") created for ${email}` +
+        `, expires ${created.expiresAt === null ? "never" : new Date(created.expiresAt).toISOString()}`,
+      );
+      sendJson(res, 201, {
+        token: created.token,
+        id: created.id,
+        name: created.name,
+        created_at: new Date(created.createdAt).toISOString(),
+        expires_at: created.expiresAt === null ? null : new Date(created.expiresAt).toISOString(),
+        note: "Store this now — only its hash is kept, so it cannot be shown again.",
+      }, CORS_HEADERS);
+    } catch (error) {
+      if (error instanceof PortalAuthError) {
+        console.error(
+          `smartbill-mcp: api token request failed at stage=${error.stage}: ${error.message}`);
+        sendJson(res, 401, { error: "invalid_grant", message: authFailureMessage(error) }, CORS_HEADERS);
+        return true;
+      }
+      sendOAuthError(res, error);
+    }
+    return true;
+  }
+
+  if (path === "/api-tokens" && method === "GET") {
+    const tenant = await tenantFromBearer(req, provider);
+    if (!tenant) return unauthorized(res);
+    const tokens = await provider.listApiTokens(tenant);
+    sendJson(res, 200, {
+      tokens: tokens.map((t) => ({
+        id: t.id,
+        name: t.name,
+        created_at: new Date(t.createdAt).toISOString(),
+        last_used_at: t.lastUsedAt === null ? null : new Date(t.lastUsedAt).toISOString(),
+        expires_at: t.expiresAt === null ? null : new Date(t.expiresAt).toISOString(),
+      })),
+    }, CORS_HEADERS);
+    return true;
+  }
+
+  if (path.startsWith("/api-tokens/") && method === "DELETE") {
+    const tenant = await tenantFromBearer(req, provider);
+    if (!tenant) return unauthorized(res);
+    const id = decodeURIComponent(path.slice("/api-tokens/".length));
+    const removed = await provider.revokeApiToken(tenant, id);
+    if (!removed) {
+      sendJson(res, 404, { error: "not_found", message: `No API token ${id} on this account.` }, CORS_HEADERS);
+      return true;
+    }
+    console.error(`smartbill-mcp: api token ${id} revoked for ${tenant}`);
+    res.writeHead(204, CORS_HEADERS);
+    res.end();
     return true;
   }
 
@@ -270,6 +345,39 @@ function sendOAuthError(res: ServerResponse, error: unknown): void {
     return;
   }
   sendJson(res, 400, { error: "invalid_request", error_description: "The request could not be processed." }, CORS_HEADERS);
+}
+
+/**
+ * The account behind an `Authorization: Bearer`, for the token-management
+ * endpoints. Accepts either kind of bearer — an OAuth access token or a
+ * long-lived API token — so a machine client can manage its own credentials
+ * with the credential it already has.
+ */
+async function tenantFromBearer(
+  req: IncomingMessage,
+  provider: OAuthProvider,
+): Promise<string | null> {
+  const header = req.headers.authorization;
+  const match = header ? /^Bearer\s+(.+)$/i.exec(header.trim()) : null;
+  if (!match?.[1]) return null;
+  const token = match[1].trim();
+  try {
+    const resolved = token.startsWith(API_TOKEN_PREFIX)
+      ? await provider.verifyApiToken(token)
+      : await provider.verifyBearer(token);
+    return resolved.username;
+  } catch (error) {
+    if (error instanceof OAuthError) return null;
+    throw error;
+  }
+}
+
+function unauthorized(res: ServerResponse): boolean {
+  sendJson(res, 401, {
+    error: "invalid_token",
+    message: "A valid bearer token is required to manage API tokens.",
+  }, CORS_HEADERS);
+  return true;
 }
 
 function errorPage(error: unknown): string {

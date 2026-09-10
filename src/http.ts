@@ -2,7 +2,7 @@ import { createServer as createHttpServer, type IncomingMessage, type Server, ty
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { buildConfig, type SmartBillConfig } from "./config.js";
 import { sendJson } from "./http-helpers.js";
-import { OAuthError } from "./oauth/provider.js";
+import { API_TOKEN_PREFIX, OAuthError } from "./oauth/provider.js";
 import { handleOAuthRequest } from "./oauth/routes.js";
 import type { HostedRuntime } from "./portal/setup.js";
 import { BUILD_SHA, createServer, SERVER_NAME, SERVER_VERSION } from "./server.js";
@@ -156,8 +156,13 @@ async function resolveBearer(
   const header = req.headers.authorization;
   const match = header ? /^Bearer\s+(.+)$/i.exec(header.trim()) : null;
   if (!match?.[1]) return null;
+  const token = match[1].trim();
   try {
-    return await runtime.oauth.verifyBearer(match[1].trim());
+    // The prefix says which kind of credential this is, so neither sort pays for
+    // a failed lookup against the other's table on every request.
+    return token.startsWith(API_TOKEN_PREFIX)
+      ? await runtime.oauth.verifyApiToken(token)
+      : await runtime.oauth.verifyBearer(token);
   } catch (error) {
     if (error instanceof OAuthError) return null;
     throw error;

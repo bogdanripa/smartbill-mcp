@@ -3,7 +3,7 @@
 // store (both are created in portal/setup.ts).
 
 import pg from "pg";
-import type { OAuthStore, StoredClient, StoredCode, StoredToken } from "./store.js";
+import type { OAuthStore, StoredApiToken, StoredClient, StoredCode, StoredToken } from "./store.js";
 
 const CREATE_TABLES = `
   CREATE TABLE IF NOT EXISTS oauth_clients (
@@ -32,6 +32,16 @@ const CREATE_TABLES = `
     scope        text,
     expires_at   timestamptz
   );
+  CREATE TABLE IF NOT EXISTS api_tokens (
+    token_hash   text PRIMARY KEY,
+    id           text NOT NULL UNIQUE,
+    tenant_email text NOT NULL,
+    name         text NOT NULL,
+    created_at   timestamptz NOT NULL DEFAULT now(),
+    last_used_at timestamptz,
+    expires_at   timestamptz
+  );
+  CREATE INDEX IF NOT EXISTS api_tokens_tenant ON api_tokens (tenant_email);
 `;
 
 interface ClientRow {
@@ -50,6 +60,14 @@ interface CodeRow {
   resource: string | null;
   scope: string | null;
   expires_at: Date;
+}
+interface ApiTokenRow {
+  id: string;
+  tenant_email: string;
+  name: string;
+  created_at: Date;
+  last_used_at: Date | null;
+  expires_at: Date | null;
 }
 interface TokenRow {
   kind: string;
@@ -161,4 +179,55 @@ export class PostgresOAuthStore implements OAuthStore {
   async deleteToken(tokenHash: string): Promise<void> {
     await this.pool.query("DELETE FROM oauth_tokens WHERE token_hash = $1", [tokenHash]);
   }
+
+  async saveApiToken(tokenHash: string, data: StoredApiToken): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO api_tokens (token_hash, id, tenant_email, name, created_at, last_used_at, expires_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [
+        tokenHash,
+        data.id,
+        data.tenantEmail,
+        data.name,
+        new Date(data.createdAt),
+        data.lastUsedAt === null ? null : new Date(data.lastUsedAt),
+        data.expiresAt === null ? null : new Date(data.expiresAt),
+      ],
+    );
+  }
+
+  async getApiToken(tokenHash: string): Promise<StoredApiToken | null> {
+    const { rows } = await this.pool.query<ApiTokenRow>(
+      "SELECT * FROM api_tokens WHERE token_hash = $1", [tokenHash]);
+    return rows[0] ? apiTokenFrom(rows[0]) : null;
+  }
+
+  async listApiTokens(tenantEmail: string): Promise<StoredApiToken[]> {
+    const { rows } = await this.pool.query<ApiTokenRow>(
+      "SELECT * FROM api_tokens WHERE tenant_email = $1 ORDER BY created_at DESC", [tenantEmail]);
+    return rows.map(apiTokenFrom);
+  }
+
+  async deleteApiToken(tenantEmail: string, id: string): Promise<boolean> {
+    // Scoped by tenant so a token id alone never revokes another account's token.
+    const { rowCount } = await this.pool.query(
+      "DELETE FROM api_tokens WHERE tenant_email = $1 AND id = $2", [tenantEmail, id]);
+    return (rowCount ?? 0) > 0;
+  }
+
+  async touchApiToken(tokenHash: string, when: number): Promise<void> {
+    await this.pool.query(
+      "UPDATE api_tokens SET last_used_at = $2 WHERE token_hash = $1", [tokenHash, new Date(when)]);
+  }
+}
+
+function apiTokenFrom(row: ApiTokenRow): StoredApiToken {
+  return {
+    id: row.id,
+    tenantEmail: row.tenant_email,
+    name: row.name,
+    createdAt: row.created_at.getTime(),
+    lastUsedAt: row.last_used_at ? row.last_used_at.getTime() : null,
+    expiresAt: row.expires_at ? row.expires_at.getTime() : null,
+  };
 }

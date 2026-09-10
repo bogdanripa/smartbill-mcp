@@ -142,6 +142,62 @@ hashed (SHA-256); codes are single-use; PKCE (`S256`) is required.
 An unauthenticated MCP request gets `401` with a `WWW-Authenticate` header
 pointing at the resource metadata — that is what kicks off the flow.
 
+### Long-lived API tokens (machine clients)
+
+OAuth is right for Claude and wrong for a cron job: an access token lasts an
+hour, and its refresh token expires 30 days after issue **without being extended
+by use**, so an unattended sync re-authorises monthly or silently breaks. API
+tokens are the alternative — per account, no expiry unless you ask for one, and
+presented on the same `Authorization: Bearer` header as everything else.
+
+Mint one by proving you own the account, exactly as the authorize page does —
+by signing in to SmartBill:
+
+```bash
+curl -sS -X POST https://<host>/api-tokens \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"you@company.ro","password":"…","name":"attio sync"}'
+```
+
+```json
+{
+  "token": "sbmcp_…",
+  "id": "9f2c1a7b4e5d6c08",
+  "name": "attio sync",
+  "created_at": "2026-09-10T11:00:00.000Z",
+  "expires_at": null,
+  "note": "Store this now — only its hash is kept, so it cannot be shown again."
+}
+```
+
+Then use it like any bearer:
+
+```bash
+curl -X POST https://<host>/mcp -H "Authorization: Bearer sbmcp_…" …
+```
+
+Pass `"expires_in_days": 90` to give a token a lifetime; omit it and the token
+never expires, which is the point.
+
+Manage them with the token itself (or with an OAuth access token), so a machine
+can rotate its own credential unattended:
+
+```bash
+curl -sS https://<host>/api-tokens -H "Authorization: Bearer sbmcp_…"
+curl -sS -X DELETE https://<host>/api-tokens/<id> -H "Authorization: Bearer sbmcp_…"
+```
+
+Listing returns `id`, `name`, `created_at`, `last_used_at` and `expires_at` —
+never the secret. Like OAuth tokens these are stored only as a SHA-256 hash, so
+a lost one is replaced, never recovered; `last_used_at` is written at most
+hourly, so a busy token does not cost a database write per call. Revocation is
+scoped to the owning account and takes effect on the next request.
+
+The `sbmcp_` prefix is load-bearing: it tells the bearer path which table to
+look in, so neither kind of credential pays for a failed lookup against the
+other, and a leaked token is recognisable for what it is in a log or a config
+file.
+
 ### The homepage
 
 The marketing / overview page (what the connector does and how to add it) is a
